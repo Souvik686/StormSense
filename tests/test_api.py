@@ -121,12 +121,15 @@ def test_unified_districts_aggregation():
     r = unified_client.get("/api/nowcast/districts?lead=2")
     assert r.status_code == 200
     districts = r.json()
-    assert len(districts) == 12
-    # Verify North 24 Parganas is present and flagged primary
+    # 19 polygons from the 2011 ADM2 source, covering all 23 modern districts
+    # (Kalimpong/Alipurduar/Jhargram and the Bardhaman split are bundled).
+    assert len(districts) == 19
     n24 = [d for d in districts if d["district"] == "North 24 Parganas"]
     assert len(n24) == 1
-    assert n24[0]["is_primary"] is True
     assert "aggregation_method" in n24[0]
+    # Advisories are risk-ordered, so the first entry must be the highest risk --
+    # no district is pinned to the top regardless of its forecast.
+    assert districts == sorted(districts, key=lambda d: -d["overall_pct"])
 
 def test_unified_thermodynamics():
     r = unified_client.get("/api/nowcast/thermodynamics")
@@ -152,11 +155,16 @@ def test_unified_boundaries_west_bengal():
     assert r.status_code == 200
     fc = r.json()
     assert fc["type"] == "FeatureCollection"
-    assert len(fc["features"]) == 12
+    assert len(fc["features"]) == 19
     names = [f["properties"]["Name"] for f in fc["features"]]
     assert "North 24 Parganas" in names
     assert "Nadia" in names
     assert "Kolkata" in names
+    # Districts absent from the original boundary file must now be present --
+    # their omission was clipping northern and western West Bengal off the map.
+    assert "Darjeeling & Kalimpong" in names
+    assert "Purulia" in names
+    assert "Howrah" in names
 
 
 def test_unified_benchmark_models():
@@ -215,8 +223,11 @@ def test_unified_mode_status():
     assert r.status_code == 200
     data = r.json()
     assert data["live_surface_obs"] is True
-    assert data["live_ml_nowcast"] is False
-    assert "ERA5" in data["ml_nowcast_reason"]
+    # live_ml_nowcast reflects whether the operational input has been ingested.
+    # It is no longer hardcoded False -- when the pipeline has data it is True.
+    assert isinstance(data["live_ml_nowcast"], bool)
+    assert data["live_ml_nowcast"] == data["live_status"]["available"]
+    assert data["ml_nowcast_reason"]
     assert "Kalbaishakhi" in data["historical_case"]["event"]
     assert data["model"]["name"] == "SevereWeatherNet V2 Calibrated"
     assert data["model"]["parameters"] == 781889
@@ -238,11 +249,20 @@ def test_unified_live_ml_status():
     r = unified_client.get("/api/live/ml-status")
     assert r.status_code == 200
     data = r.json()
-    assert data["available"] is False
-    assert "ERA5" in data["reason"]
-    assert len(data["required_inputs"]) == 4
-    assert any(i["name"] == "SRTM DEM Elevation Grid" and i["status"] == "AVAILABLE" for i in data["required_inputs"])
-    assert any("ERA5" in i["name"] and i["status"] == "UNAVAILABLE" for i in data["required_inputs"])
+    assert isinstance(data["available"], bool)
+    assert data["reason"]
+    assert data["temporal_requirement"].startswith("6 consecutive hourly timesteps")
+    # Limitations of the operational substitution must always be stated.
+    assert data["known_limitations"]
+
+    if data["available"]:
+        # Provenance for all six input timesteps must be traceable, and the final
+        # slot must be a real analysis -- never a forecast presented as observed.
+        slots = data["input_slot_provenance"]
+        assert len(slots) == 6
+        assert slots[-1]["source"] == "analysis"
+        assert all(s["source"] in {"analysis", "interpolated"} for s in slots)
+        assert data["analysis_time"]
 
 
 def test_unified_data_health():
@@ -286,23 +306,72 @@ def test_unified_html_dual_mode_elements():
 
 
 def test_unified_mode_query_param():
-    # When mode=historical, nowcast summary returns normal predictions
+    """Both modes must produce a real forecast, and each must report its own
+    mode back -- live must never silently fall back to historical data."""
     r_hist = unified_client.get("/api/nowcast/summary?lead=2&mode=historical")
     assert r_hist.status_code == 200
     data_hist = r_hist.json()
     assert "hazards" in data_hist
+    assert data_hist["mode"] == "historical"
 
-    # When mode=live, nowcast summary returns honest unavailable notification
     r_live = unified_client.get("/api/nowcast/summary?lead=2&mode=live")
     assert r_live.status_code == 200
     data_live = r_live.json()
-    assert data_live["status"] == "unavailable"
-    assert data_live["mode"] == "live"
-    assert "unavailable" in data_live["message"].lower()
 
-    # When mode=live, risk-map returns empty feature collection with status
-    r_map = unified_client.get("/api/nowcast/risk-map?lead=2&mode=live")
-    assert r_map.status_code == 200
-    data_map = r_map.json()
-    assert data_map["type"] == "FeatureCollection"
-    assert len(data_map["features"]) == 0
+    if data_live.get("status") == "unavailable":
+        # Acceptable only when the operational input has genuinely never been
+        # ingested; the payload must then say why rather than invent a forecast.
+        assert data_live["mode"] == "live"
+        assert data_live["message"]
+    else:
+        assert data_live["mode"] == "live"
+        assert "hazards" in data_live
+        # Live must be driven by its own analysis, not the historical case study.
+        assert data_live["issue_time"] != data_hist["issue_time"]
+
+        r_map = unified_client.get("/api/nowcast/risk-map?lead=2&mode=live")
+        assert r_map.status_code == 200
+        data_map = r_map.json()
+        assert data_map["type"] == "FeatureCollection"
+        assert len(data_map["features"]) == 825
+
+
+def test_live_horizons_are_distinct_and_preserve_mode():
+    """Each horizon must return its own forecast for the horizon requested,
+    while staying in live mode."""
+    seen = {}
+    for lead in (2, 4, 6):
+        r = unified_client.get(f"/api/nowcast/summary?lead={lead}&mode=live")
+        assert r.status_code == 200
+        data = r.json()
+        if data.get("status") == "unavailable":
+            pytest.skip("live operational input not ingested in this environment")
+        assert data["mode"] == "live", f"+{lead}h silently left live mode"
+        assert data["lead_hours"] == lead
+        seen[lead] = data["forecast_valid_time"]
+    # Distinct horizons must map to distinct valid times.
+    assert len(set(seen.values())) == len(seen), f"horizons collapsed to same valid time: {seen}"
+
+
+def test_point_inspection_respects_mode_and_horizon():
+    lat, lon = 22.72, 88.48  # North 24 Parganas
+    for mode in ("live", "historical"):
+        for lead in (2, 4, 6):
+            r = unified_client.get(
+                f"/api/nowcast/point?lat={lat}&lon={lon}&lead={lead}&mode={mode}"
+            )
+            assert r.status_code == 200
+            d = r.json()
+            if d.get("status") == "unavailable":
+                continue
+            assert d["mode"] == mode
+            assert d["lead_hours"] == lead
+
+
+def test_point_inspection_rejects_locations_outside_west_bengal():
+    for lat, lon in [(27.70, 85.32), (23.80, 90.40), (23.36, 85.33)]:
+        r = unified_client.get(f"/api/nowcast/point?lat={lat}&lon={lon}&lead=2&mode=live")
+        assert r.status_code == 200
+        d = r.json()
+        assert d.get("inside_monitored_region") is False
+        assert d["status"] == "LOCATION OUTSIDE MONITORED REGION"
