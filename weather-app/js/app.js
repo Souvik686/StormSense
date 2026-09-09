@@ -215,9 +215,6 @@
         liveCountdownSeconds = LIVE_REFRESH_MS / 1000;
         setText("live-refresh-countdown", formatCountdown(liveCountdownSeconds));
 
-        
-        }
-
         if (isManual) {
           window.showToast("Refreshed live surface observation for North 24 Parganas", "check_circle");
         }
@@ -251,7 +248,8 @@
       fetch(API_BASE + "/api/nowcast/thermodynamics" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; })
     ])
       .then(function (results) {
-        var summary = results[1];\n        window.StormSenseCurrentSummary = summary;
+        var summary = results[1];
+        window.StormSenseCurrentSummary = summary;
         var districts = results[2];
         var cells = results[3];
 
@@ -526,7 +524,8 @@
     ])
       .then(function (results) {
         var currentObs = results[0];
-        var summary = results[1];\n        window.StormSenseCurrentSummary = summary;
+        var summary = results[1];
+        window.StormSenseCurrentSummary = summary;
         var districts = results[2];
         var riskMap = results[3];
         var thermo = results[4];
@@ -2201,7 +2200,8 @@
       fetch(API_BASE + "/api/nowcast/thermodynamics" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; })
     ])
       .then(function (results) {
-        var summary = results[0];\n        window.StormSenseCurrentSummary = summary;
+        var summary = results[0];
+        window.StormSenseCurrentSummary = summary;
         var districts = results[1];
         var riskMap = results[2];
         var cells = results[3];
