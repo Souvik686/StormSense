@@ -137,7 +137,7 @@ class NowcastService:
         self.refresh_live_state()
 
     def _init_district_mapping(self):
-        districts_path = os.path.join("Data", "BOUNDARIES", "west_bengal_districts.geojson")
+        districts_path = os.path.join("Data", "BOUNDARIES", "west_bengal_districts_full.geojson")
         if os.path.exists(districts_path):
             try:
                 with open(districts_path, "r", encoding="utf-8") as f:
@@ -439,11 +439,20 @@ class NowcastService:
             return self.live_valid_time or self.current_valid_time
         return self.current_valid_time
 
-    def is_live_stale(self, max_age_hours: float = 7.0) -> bool:
-        """True when the live prediction is older than one GFS cycle interval
-        (+1h production margin), i.e. a newer analysis should have arrived but
+    # Operational analyses publish every 6h, and production lag means the newest
+    # available cycle is routinely 6-10h old in normal operation (measured against
+    # the live feed: a cycle is typically not published until ~4-5h after its
+    # nominal time). Staleness therefore means "older than one full cycle interval
+    # plus expected production lag" -- a tighter bound would flag healthy
+    # operation as stale.
+    LIVE_STALE_AFTER_HOURS = 12.0
+
+    def is_live_stale(self, max_age_hours: Optional[float] = None) -> bool:
+        """True when the live prediction is older than one cycle interval plus
+        expected production lag, i.e. a newer analysis should have arrived but
         the refresh has not succeeded. Callers surface this as a 'stale' badge
         rather than silently presenting old data as current."""
+        max_age_hours = self.LIVE_STALE_AFTER_HOURS if max_age_hours is None else max_age_hours
         if self.live_pred is None or self.live_valid_time is None:
             return True
         try:
@@ -690,12 +699,12 @@ class NowcastService:
 
     def _is_inside_west_bengal(self, lat: float, lon: float) -> bool:
         """Point-in-polygon against the authoritative outer state boundary
-        (Data/BOUNDARIES/west_bengal.geojson), used to reject clicks outside the
+        (Data/BOUNDARIES/west_bengal_full.geojson), used to reject clicks outside the
         monitored region rather than reporting a nearest-grid-cell value for
         somewhere in Bihar/Bangladesh/Nepal."""
         if self._wb_polygon is None:
             try:
-                path = os.path.join("Data", "BOUNDARIES", "west_bengal.geojson")
+                path = os.path.join("Data", "BOUNDARIES", "west_bengal_full.geojson")
                 with open(path, "r", encoding="utf-8") as f:
                     fc = json.load(f)
                 self._wb_polygon = shape(fc["features"][0]["geometry"])
