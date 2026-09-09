@@ -113,6 +113,7 @@ class NowcastService:
         # 3. Load District Boundaries & Precompute Cell Mapping
         self.districts_fc = None
         self.district_cells: Dict[str, List[tuple]] = {}
+        self._wb_polygon = None  # lazily loaded outer state boundary (see _is_inside_west_bengal)
         self._init_district_mapping()
 
         # 4. Initialize Operational Reference Window & Run Initial Nowcast
@@ -412,23 +413,80 @@ class NowcastService:
         }
         return actions.get(level.lower(), "ROUTINE WATCH")
 
+    # ── Mode resolution ──────────────────────────────────────────────────────
+    # Live and Historical differ ONLY in which cached prediction (and its issue
+    # time) is read. All aggregation/formatting below is shared, so the two modes
+    # can never diverge in how risk is derived -- only in their atmospheric input.
+
+    def _resolve_mode(self, mode: Optional[str]) -> str:
+        return "live" if str(mode or "historical").lower() == "live" else "historical"
+
+    def _pred_for_mode(self, mode: Optional[str]) -> Dict[str, Any]:
+        m = self._resolve_mode(mode)
+        pred = self.live_pred if m == "live" else self.current_pred
+        if pred is None:
+            if m == "live":
+                raise RuntimeError(
+                    "Live forecast unavailable: "
+                    + (self.live_fetch_error or "operational atmospheric input has not been ingested yet.")
+                )
+            raise RuntimeError("ML model has not generated a prediction.")
+        return pred
+
+    def _issue_time_for_mode(self, mode: Optional[str]) -> str:
+        m = self._resolve_mode(mode)
+        if m == "live":
+            return self.live_valid_time or self.current_valid_time
+        return self.current_valid_time
+
+    def is_live_stale(self, max_age_hours: float = 7.0) -> bool:
+        """True when the live prediction is older than one GFS cycle interval
+        (+1h production margin), i.e. a newer analysis should have arrived but
+        the refresh has not succeeded. Callers surface this as a 'stale' badge
+        rather than silently presenting old data as current."""
+        if self.live_pred is None or self.live_valid_time is None:
+            return True
+        try:
+            t0 = datetime.fromisoformat(self.live_valid_time)
+            if t0.tzinfo is None:
+                t0 = t0.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - t0).total_seconds() / 3600.0 > max_age_hours
+        except Exception:
+            return True
+
+    def get_live_status(self) -> Dict[str, Any]:
+        """Machine-readable live-pipeline health for the API/UI freshness logic."""
+        return {
+            "available": self.live_pred is not None,
+            "issue_time": self.live_valid_time,
+            "issue_time_formatted": format_iso_time(self.live_valid_time),
+            "last_refreshed": self.live_fetched_at,
+            "is_stale": self.is_live_stale(),
+            "error": self.live_fetch_error,
+            "input_slots": self.live_slot_provenance,
+        }
+
     def get_summary(
         self,
         lead_hours: int = 2,
         district: str = "North 24 Parganas",
+        mode: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Produce the comprehensive hazard and nowcasting summary."""
-        if self.current_pred is None:
-            raise RuntimeError("ML model has not generated a prediction.")
+        """Produce the comprehensive hazard and nowcasting summary for the
+        requested mode ('live' -> GFS-driven prediction, 'historical' -> ERA5
+        case-study prediction). Aggregation logic is identical for both."""
+        pred = self._pred_for_mode(mode)
+        resolved_mode = self._resolve_mode(mode)
+        issue_time = self._issue_time_for_mode(mode)
 
         if lead_hours not in self.lead_times:
             lead_hours = self.lead_times[0]
         li = self.lead_times.index(lead_hours)
 
-        prob_grid = self.current_pred["severe_weather_prob"][li]
-        rain_grid = self.current_pred["rain_3h_mm_pred"][li]
-        ff_grid = self.current_pred["flash_flood_risk"][li]
-        overall_grid = self.current_pred["overall_risk"][li]
+        prob_grid = pred["severe_weather_prob"][li]
+        rain_grid = pred["rain_3h_mm_pred"][li]
+        ff_grid = pred["flash_flood_risk"][li]
+        overall_grid = pred["overall_risk"][li]
 
         # Aggregate for specific district (or fallback to domain)
         cells = self._get_district_cells(district)
@@ -459,10 +517,10 @@ class NowcastService:
         # Multi-horizon timeline points for frontend scrubber
         timeline = []
         for i, h in enumerate(self.lead_times):
-            p_h = self.current_pred["severe_weather_prob"][i]
-            r_h = self.current_pred["rain_3h_mm_pred"][i]
-            ff_h = self.current_pred["flash_flood_risk"][i]
-            ov_h = self.current_pred["overall_risk"][i]
+            p_h = pred["severe_weather_prob"][i]
+            r_h = pred["rain_3h_mm_pred"][i]
+            ff_h = pred["flash_flood_risk"][i]
+            ov_h = pred["overall_risk"][i]
 
             if cells:
                 p_c = float(np.max([p_h[ci, cj] for ci, cj in cells]))
@@ -476,7 +534,7 @@ class NowcastService:
                 ov_c = float(ov_h.max())
 
             lvl_c = self._level_for_prob(ov_c)
-            vt_step = compute_valid_time(self.current_valid_time, int(h))
+            vt_step = compute_valid_time(issue_time, int(h))
             timeline.append({
                 "hours_from_now": int(h),
                 "label": f"+{h}h",
@@ -490,16 +548,19 @@ class NowcastService:
                 "valid_time_formatted": format_iso_time(vt_step),
             })
 
-        # Extract t0 physical atmospheric state for the requested district / reference point
+        # t=0 physical atmospheric state. Only meaningful for the historical
+        # case study, whose ERA5 input window is denormalized at init; live mode
+        # reports current conditions separately (surface observations endpoint),
+        # so this is deliberately omitted rather than filled with historical data.
         surface_obs_t0 = None
-        if self.era5_surface_t0 is not None:
+        if resolved_mode == "historical" and self.era5_surface_t0 is not None:
             if cells:
                 ci, cj = cells[0]
             else:
                 ci, cj = 11, 18  # North 24 Parganas grid cell
             surface_obs_t0 = {
-                "source": "ERA5 Atmospheric Reanalysis Ground Truth (t=0)",
-                "time": format_iso_time(self.current_valid_time),
+                "source": "Reference atmospheric analysis (t=0)",
+                "time": format_iso_time(issue_time),
                 "temperature_c": float(round(float(self.era5_surface_t0["temp_c"][ci, cj]), 1)),
                 "humidity_pct": int(round(float(self.era5_surface_t0["rh_pct"][ci, cj]))),
                 "wind_speed_kmh": float(round(float(self.era5_surface_t0["wind_kmh"][ci, cj]), 1)),
@@ -507,16 +568,25 @@ class NowcastService:
                 "rainfall_mm": float(round(float(self.era5_surface_t0["rain_mm"][ci, cj]), 1)),
             }
 
-        forecast_vt = compute_valid_time(self.current_valid_time, lead_hours)
+        forecast_vt = compute_valid_time(issue_time, lead_hours)
         return {
             "model_version": "SevereWeatherNet V2 Calibrated",
             "parameters": self.predictor.model.count_parameters(),
-            "valid_time": self.current_valid_time,
-            "issue_time": self.current_valid_time,
-            "issue_time_formatted": format_iso_time(self.current_valid_time),
+            "mode": resolved_mode,
+            "valid_time": issue_time,
+            "issue_time": issue_time,
+            "issue_time_formatted": format_iso_time(issue_time),
             "forecast_valid_time": forecast_vt,
             "valid_time_formatted": format_iso_time(forecast_vt),
-            "operational_mode": "Historical Case Study / Demonstration Mode (Kalbaishakhi Pre-Monsoon Event)",
+            "operational_mode": (
+                "Live Operational Nowcast"
+                if resolved_mode == "live"
+                else "Historical Case Study / Demonstration Mode (Kalbaishakhi Pre-Monsoon Event)"
+            ),
+            "live_status": self.get_live_status() if resolved_mode == "live" else None,
+            "active_high_risk_district": self.get_active_high_risk_district(
+                lead_hours=lead_hours, mode=resolved_mode
+            ),
             "target_district": district,
             "selected_lead_hours": lead_hours,
             "lead_hours": lead_hours,
@@ -574,34 +644,38 @@ class NowcastService:
 
     get_nowcast_summary = get_summary
 
-    def get_risk_map(self, lead_hours: int = 2, as_polygon: bool = True) -> Dict[str, Any]:
-        """Generate GeoJSON FeatureCollection for the requested lead time."""
-        if self.current_pred is None:
-            raise RuntimeError("ML model has not generated a prediction.")
+    def get_risk_map(
+        self, lead_hours: int = 2, as_polygon: bool = True, mode: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Generate GeoJSON FeatureCollection for the requested lead time and mode."""
+        pred = self._pred_for_mode(mode)
         if lead_hours not in self.lead_times:
             lead_hours = self.lead_times[0]
         li = self.lead_times.index(lead_hours)
 
         return predictions_to_geojson(
-            self.current_pred,
-            valid_time=self.current_valid_time,
+            pred,
+            valid_time=self._issue_time_for_mode(mode),
             lead_time_hours=lead_hours,
             lead_idx=li,
             as_polygon=as_polygon,
         )
 
-    def get_risk_surface_png(self, lead_hours: int = 2) -> bytes:
-        """Return pre-rendered PNG bytes for the continuous West Bengal risk surface."""
+    def get_risk_surface_png(self, lead_hours: int = 2, mode: Optional[str] = None) -> bytes:
+        """Return pre-rendered PNG bytes for the continuous West Bengal risk
+        surface. Both modes render through the same masked generator, so the
+        West Bengal clip is identical for Live and Historical."""
+        resolved = self._resolve_mode(mode)
+        cache = self.live_risk_surface_png_cache if resolved == "live" else self.risk_surface_png_cache
         if lead_hours not in self.lead_times:
             lead_hours = self.lead_times[0]
-        if lead_hours in self.risk_surface_png_cache:
-            return self.risk_surface_png_cache[lead_hours]
-        if self.current_pred is None:
-            raise RuntimeError("ML model has not generated a prediction.")
+        if lead_hours in cache:
+            return cache[lead_hours]
+        pred = self._pred_for_mode(mode)
         li = self.lead_times.index(lead_hours)
-        grid = self.current_pred["severe_weather_prob"][li]
-        png = generate_risk_surface_png(grid, self.lats, self.lons)
-        self.risk_surface_png_cache[lead_hours] = png
+        grid = pred["severe_weather_prob"][li]
+        png = generate_risk_surface_png(grid, self.lats, self.lons, mask=get_or_create_wb_mask())
+        cache[lead_hours] = png
         return png
 
     def get_risk_surface_bounds(self) -> Dict[str, Any]:
@@ -614,18 +688,47 @@ class NowcastService:
             "max_lon": WB_MAX_LON,
         }
 
-    def get_point_inspection(self, lat: float, lon: float, lead_hours: int = 2) -> Dict[str, Any]:
-        """Query genuine model prediction and ERA5 physical inputs for any clicked coordinate."""
-        if self.current_pred is None:
-            raise RuntimeError("ML model has not generated a prediction.")
+    def _is_inside_west_bengal(self, lat: float, lon: float) -> bool:
+        """Point-in-polygon against the authoritative outer state boundary
+        (Data/BOUNDARIES/west_bengal.geojson), used to reject clicks outside the
+        monitored region rather than reporting a nearest-grid-cell value for
+        somewhere in Bihar/Bangladesh/Nepal."""
+        if self._wb_polygon is None:
+            try:
+                path = os.path.join("Data", "BOUNDARIES", "west_bengal.geojson")
+                with open(path, "r", encoding="utf-8") as f:
+                    fc = json.load(f)
+                self._wb_polygon = shape(fc["features"][0]["geometry"])
+            except Exception as e:
+                print(f"[NowcastService] Warning: could not load WB outer boundary: {e}")
+                return True  # fail open rather than blocking all inspection
+        return bool(self._wb_polygon.contains(Point(lon, lat)))
+
+    def get_point_inspection(
+        self, lat: float, lon: float, lead_hours: int = 2, mode: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Query the genuine model prediction at any clicked coordinate, for the
+        selected mode and forecast horizon."""
+        pred = self._pred_for_mode(mode)
+        resolved_mode = self._resolve_mode(mode)
+        issue_time = self._issue_time_for_mode(mode)
         if lead_hours not in self.lead_times:
             lead_hours = self.lead_times[0]
         li = self.lead_times.index(lead_hours)
 
+        if not self._is_inside_west_bengal(lat, lon):
+            return {
+                "lat": float(round(lat, 4)),
+                "lon": float(round(lon, 4)),
+                "inside_monitored_region": False,
+                "status": "LOCATION OUTSIDE MONITORED REGION",
+                "mode": resolved_mode,
+                "lead_hours": lead_hours,
+            }
+
         # 1. District identification via point-in-polygon
         district_name = "Outside monitored district"
         if self.districts_fc:
-            from shapely.geometry import shape, Point
             pt = Point(lon, lat)
             for feat in self.districts_fc.get("features", []):
                 poly = shape(feat["geometry"])
@@ -640,15 +743,17 @@ class NowcastService:
         cell_lon = float(self.lons[lon_idx])
 
         # 3. Model Predictions at selected lead
-        sp = float(self.current_pred["severe_weather_prob"][li, lat_idx, lon_idx])
-        rp = float(self.current_pred["rain_3h_mm_pred"][li, lat_idx, lon_idx])
-        ff = float(self.current_pred["flash_flood_risk"][li, lat_idx, lon_idx])
-        ov = float(self.current_pred["overall_risk"][li, lat_idx, lon_idx])
+        sp = float(pred["severe_weather_prob"][li, lat_idx, lon_idx])
+        rp = float(pred["rain_3h_mm_pred"][li, lat_idx, lon_idx])
+        ff = float(pred["flash_flood_risk"][li, lat_idx, lon_idx])
+        ov = float(pred["overall_risk"][li, lat_idx, lon_idx])
 
         lvl = self._level_for_prob(sp)
         lbl = "WARNING" if sp >= 0.75 else "ALERT" if sp >= 0.50 else "WATCH" if sp >= 0.25 else "NORMAL"
 
-        # 4. Physical ERA5 Inputs at t0
+        # 4. Physical analysis inputs at t=0. Only available for the historical
+        # case study (denormalized at init); never borrowed from historical data
+        # while serving a live query.
         obs_inputs = {
             "temperature_c": None,
             "humidity_pct": None,
@@ -656,7 +761,7 @@ class NowcastService:
             "wind_kmh": None,
             "pressure_hpa": None,
         }
-        if hasattr(self, "era5_surface_t0") and self.era5_surface_t0:
+        if resolved_mode == "historical" and getattr(self, "era5_surface_t0", None):
             obs_inputs = {
                 "temperature_c": float(round(float(self.era5_surface_t0["temp_c"][lat_idx, lon_idx]), 1)),
                 "humidity_pct": int(round(float(self.era5_surface_t0["rh_pct"][lat_idx, lon_idx]))),
@@ -665,9 +770,8 @@ class NowcastService:
                 "pressure_hpa": float(round(float(self.era5_surface_t0["pres_hpa"][lat_idx, lon_idx]), 1)),
             }
 
-        # Dynamic Valid Time
-        from datetime import datetime, timezone, timedelta
-        clean = self.current_valid_time.replace("Z", "+00:00").replace(" ", "T")
+        # Dynamic Valid Time, anchored to the issue time of the SELECTED mode
+        clean = issue_time.replace("Z", "+00:00").replace(" ", "T")
         issue_dt = datetime.fromisoformat(clean)
         valid_dt = issue_dt + timedelta(hours=lead_hours)
         valid_formatted = valid_dt.strftime("%d %b %Y %H:%M UTC")
@@ -675,6 +779,8 @@ class NowcastService:
         return {
             "lat": float(round(lat, 4)),
             "lon": float(round(lon, 4)),
+            "inside_monitored_region": True,
+            "mode": resolved_mode,
             "district": district_name,
             "grid_cell": {"lat": round(cell_lat, 2), "lon": round(cell_lon, 2)},
             "lead_hours": lead_hours,
@@ -692,18 +798,20 @@ class NowcastService:
             "observed_inputs": obs_inputs,
         }
 
-    def get_district_advisories(self, lead_hours: int = 2) -> List[Dict[str, Any]]:
+    def get_district_advisories(
+        self, lead_hours: int = 2, mode: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Calculate real model-derived risk aggregated across districts."""
-        if self.current_pred is None:
-            raise RuntimeError("ML model has not generated a prediction.")
+        pred = self._pred_for_mode(mode)
+        issue_time = self._issue_time_for_mode(mode)
         if lead_hours not in self.lead_times:
             lead_hours = self.lead_times[0]
         li = self.lead_times.index(lead_hours)
 
-        prob_grid = self.current_pred["severe_weather_prob"][li]
-        rain_grid = self.current_pred["rain_3h_mm_pred"][li]
-        ff_grid = self.current_pred["flash_flood_risk"][li]
-        ov_grid = self.current_pred["overall_risk"][li]
+        prob_grid = pred["severe_weather_prob"][li]
+        rain_grid = pred["rain_3h_mm_pred"][li]
+        ff_grid = pred["flash_flood_risk"][li]
+        ov_grid = pred["overall_risk"][li]
 
         advisories = []
         for name, cells in self.district_cells.items():
@@ -749,27 +857,63 @@ class NowcastService:
                 "title": f"{name} {self._stage_for_level(lvl)} ({'+'+str(lead_hours)+'h'})",
                 "body": body,
                 "aggregation_method": "Maximum & 90th Percentile Cell Hazard (Civil Protection Standard)",
-                "issue_time": self.current_valid_time,
-                "valid_time": compute_valid_time(self.current_valid_time, lead_hours),
-                "valid_until": format_iso_time(compute_valid_time(self.current_valid_time, lead_hours)),
+                "issue_time": issue_time,
+                "valid_time": compute_valid_time(issue_time, lead_hours),
+                "valid_until": format_iso_time(compute_valid_time(issue_time, lead_hours)),
             })
 
-        # Sort so highest risk and primary monitored district appear at the top
-        advisories.sort(key=lambda x: (not x["is_primary"], -x["overall_pct"]))
+        # Strictly risk-ordered: the monitored region is all of West Bengal, so the
+        # highest-risk district must lead regardless of which district is nominally
+        # "primary" -- an early-warning list that pins one district to the top would
+        # bury the actual threat.
+        advisories.sort(key=lambda x: -x["overall_pct"])
         return advisories
 
-    def get_high_risk_cells(self, lead_hours: int = 2, top_k: int = 8) -> List[Dict[str, Any]]:
+    # Threshold above which a district is considered an "active high-risk area"
+    # (matches the WATCH boundary used by _level_for_prob).
+    ACTIVE_RISK_THRESHOLD_PCT = 25
+
+    def get_active_high_risk_district(
+        self, lead_hours: int = 2, mode: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Return the single highest-risk district for the given mode/horizon, or
+        None when no district currently exceeds the watch threshold. This is the
+        ONE authoritative source for the dashboard's 'Active High-Risk Area' --
+        it is always computed from the same forecast the map and cards show, and
+        is never hardcoded to a particular district."""
+        try:
+            advisories = self.get_district_advisories(lead_hours=lead_hours, mode=mode)
+        except RuntimeError:
+            return None
+        if not advisories:
+            return None
+        top = advisories[0]
+        if top["overall_pct"] < self.ACTIVE_RISK_THRESHOLD_PCT and not top["alert"]:
+            return None
+        return {
+            "district": top["district"],
+            "overall_pct": top["overall_pct"],
+            "thunderstorm_pct": top["thunderstorm_pct"],
+            "risk_level": top["risk_level"],
+            "stage": top["stage"],
+            "alert": top["alert"],
+            "lead_hours": lead_hours,
+        }
+
+    def get_high_risk_cells(
+        self, lead_hours: int = 2, top_k: int = 8, mode: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Retrieve top high-probability grid cells from the real model output for the given horizon."""
-        if self.current_pred is None:
-            raise RuntimeError("ML model has not generated a prediction.")
+        pred = self._pred_for_mode(mode)
+        issue_time = self._issue_time_for_mode(mode)
         if lead_hours not in self.lead_times:
             lead_hours = self.lead_times[0]
         li = self.lead_times.index(lead_hours)
 
-        prob_grid = self.current_pred["severe_weather_prob"][li]
-        rain_grid = self.current_pred["rain_3h_mm_pred"][li]
-        ff_grid = self.current_pred["flash_flood_risk"][li]
-        overall_grid = self.current_pred["overall_risk"][li]
+        prob_grid = pred["severe_weather_prob"][li]
+        rain_grid = pred["rain_3h_mm_pred"][li]
+        ff_grid = pred["flash_flood_risk"][li]
+        overall_grid = pred["overall_risk"][li]
         thr = float(self.predictor.threshold_per_lead.get(lead_hours, 0.5) if isinstance(self.predictor.threshold_per_lead, dict) else 0.5)
 
         cells_data = []
@@ -784,7 +928,7 @@ class NowcastService:
         cells_data.sort(key=lambda x: -x[0])
 
         top_cells = []
-        vt = compute_valid_time(self.current_valid_time, lead_hours)
+        vt = compute_valid_time(issue_time, lead_hours)
         vt_fmt = format_iso_time(vt)
 
         for rank, (p, r, ff, ov, i, j, lat, lon) in enumerate(cells_data[:top_k], 1):
@@ -800,7 +944,7 @@ class NowcastService:
                 "rank": rank,
                 "lead_time_hours": lead_hours,
                 "lead_hours": lead_hours,
-                "issue_time": self.current_valid_time,
+                "issue_time": issue_time,
                 "valid_time": vt,
                 "valid_time_formatted": vt_fmt,
                 "latitude": round(float(lat), 3),
