@@ -1,17 +1,17 @@
 /**
- * SevereWeatherNet V2 / StormSense — Operational Nowcasting Frontend Engine
+ * StormSense — Operational Nowcasting Frontend Engine
  *
  * Real Data Integration:
  * - Dynamic UTC issue and valid time derivation (no hardcoded timestamps)
  * - Real-time IST clock ticker (1-second precision)
  * - West Bengal 12-district administrative GeoJSON boundaries
  * - Official West Bengal outer state boundary GeoJSON
- * - 0.25° SevereWeatherNet V2 Calibrated continuous risk surface layer
+ * - 0.25° StormSense continuous risk surface layer
  * - Verified 2024 held-out test benchmarks (V2 vs V1 vs Persistence)
  * - Top predicted high-risk convective cells
- * - Atmospheric thermodynamics (ERA5 CAPE, CIN, Bulk Shear)
+ * - Atmospheric thermodynamics (CAPE, CIN, Bulk Shear)
  * - Physical XAI feature attribution
- * - Live North 24 Parganas surface station telemetry (OpenWeather)
+ * - Live surface station telemetry
  * - Dual-Mode Support: LIVE MONITORING (default /) vs HISTORICAL CASE STUDY (/?mode=historical)
  */
 (function () {
@@ -49,9 +49,61 @@
   window.StormSenseLiveSurface = null;
   window.StormSenseDataHealth = null;
 
-  var liveCountdownSeconds = 60;
+  // Live data refresh cadence (5 minutes).
+  var LIVE_REFRESH_MS = 300000;
+  var liveCountdownSeconds = LIVE_REFRESH_MS / 1000;
   var liveRefreshTimer = null;
   var countdownTimer = null;
+
+  function formatCountdown(totalSeconds) {
+    var m = Math.floor(totalSeconds / 60);
+    var s = totalSeconds % 60;
+    return m > 0 ? m + "m " + (s < 10 ? "0" : "") + s + "s" : s + "s";
+  }
+
+  // The monitored region is the whole state; the active high-risk area is
+  // computed from the same forecast the map and cards show. Nothing here is
+  // hardcoded to a district -- contradictory region labels were a real defect.
+  function applyRegionState(summary) {
+    setText("profile-district", "West Bengal");
+
+    var el = document.getElementById("active-high-risk-area");
+    if (!el) return;
+
+    if (!summary || summary.status === "unavailable") {
+      el.textContent = "UNAVAILABLE";
+      el.className = "text-sm font-bold text-slate-400";
+      return;
+    }
+
+    var active = summary && summary.active_high_risk_district;
+    if (active && active.district) {
+      el.textContent = active.district + " (" + active.overall_pct + "%)";
+      el.className = "text-sm font-bold text-amber-300";
+    } else {
+      el.textContent = "NO ACTIVE HIGH-RISK DISTRICT";
+      el.className = "text-sm font-bold text-emerald-300";
+    }
+  }
+
+  // Marks the dashboard when the displayed forecast is older than expected.
+  // Values are kept (not blanked) so operators still see the last good state.
+  function applyFreshnessState(summary) {
+    var el = document.getElementById("data-freshness");
+    if (!el) return;
+    var status = summary && summary.live_status;
+    if (!status) {
+      el.textContent = "";
+      return;
+    }
+    if (status.is_stale) {
+      el.textContent = "STALE - last update " + (status.issue_time_formatted || "unknown");
+      el.className = "text-[10px] font-bold text-amber-400";
+    } else {
+      el.textContent = "CURRENT - " + (status.issue_time_formatted || "");
+      el.className = "text-[10px] font-bold text-emerald-400";
+    }
+  }
 
   // Static reference location for monitored station
   var DEFAULT_LOCATION = {
@@ -107,6 +159,13 @@
     if (legendLead) legendLead.textContent = "+" + leadHours + "h";
   }
 
+  function formatIstClock(date) {
+    var utc = date.getTime() + (date.getTimezoneOffset() * 60000);
+    var ist = new Date(utc + (5.5 * 3600000));
+    return String(ist.getHours()).padStart(2, "0") + ":" +
+           String(ist.getMinutes()).padStart(2, "0") + " IST";
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Real-Time IST Clock (Every 1 Second)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -153,17 +212,10 @@
           updateLiveStationPopup(obs);
         }
 
-        liveCountdownSeconds = 60;
-        setText("live-refresh-countdown", "60s");
+        liveCountdownSeconds = LIVE_REFRESH_MS / 1000;
+        setText("live-refresh-countdown", formatCountdown(liveCountdownSeconds));
 
-        var obsBadge = document.getElementById("header-obs-time-text");
-        if (obsBadge) {
-          if (data.data_age_seconds != null) {
-            var mins = Math.floor(data.data_age_seconds / 60);
-            obsBadge.textContent = mins <= 1 ? "Just now" : mins + "m ago";
-          } else {
-            obsBadge.textContent = "Live Ingest";
-          }
+        
         }
 
         if (isManual) {
@@ -172,6 +224,67 @@
       })
       .catch(function (err) {
         console.warn("Live surface fetch error:", err);
+      });
+  };
+
+  /**
+   * Five-minute live refresh. Updates current observations AND the forecast
+   * products (hazard cards, districts, map surface, advisories, timestamps)
+   * without reloading the page, and deliberately preserves the selected
+   * horizon, the selected mode and the map viewport.
+   *
+   * A failure on any leg leaves the previously displayed values in place rather
+   * than blanking them; the freshness indicator marks them stale instead.
+   */
+  window.refreshLiveDashboard = function (isManual) {
+    if (window.stormSenseMode !== "live") return Promise.resolve();
+
+    var lead = window.currentLeadHours || 2;
+    var modeQS = "&mode=live";
+
+    return Promise.all([
+      window.fetchLiveSurfaceData(false).catch(function() { return null; }),
+      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/districts?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/high-risk-cells?lead=" + lead + "&top_k=8" + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/xai" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/thermodynamics" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; })
+    ])
+      .then(function (results) {
+        var summary = results[1];\n        window.StormSenseCurrentSummary = summary;
+        var districts = results[2];
+        var cells = results[3];
+
+        if (summary && summary.hazards) {
+          window.StormSenseNowcastData = summary;
+          paintForecastCards(summary);
+          if (summary.timeline) renderNowcast(summary.timeline);
+          if (summary.issue_time) updateDynamicTimes(summary.issue_time, lead);
+        }
+        applyRegionState(summary);
+        applyFreshnessState(summary);
+
+        if (districts && districts.length) {
+          window.StormSenseDistrictsData = districts;
+          renderDistricts(adaptDistricts(districts, lead, summary && summary.issue_time));
+        }
+
+        if (cells) {
+          window.StormSenseHighRiskCells = cells;
+          renderHighRiskCells(cells);
+          if (window.stormSenseMap) renderHotspotBeacons(window.stormSenseMap, cells);
+        }
+
+        // Repaint the surface for the CURRENT horizon; never re-fit the map, so
+        // the operator's pan/zoom survives the refresh.
+        if (window.stormSenseMap) renderContinuousRiskSurface(window.stormSenseMap, lead);
+
+        setText("last-updated-time", formatIstClock(new Date()));
+        if (isManual) window.showToast("Live data refreshed", "check_circle");
+      })
+      .catch(function (err) {
+        // Never let one bad cycle kill the interval or wipe the display.
+        console.warn("Live refresh cycle failed:", err);
       });
   };
 
@@ -258,7 +371,7 @@
         pipeBadge.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px] font-mono font-bold";
       }
       if (pipeDot) pipeDot.className = "size-1.5 rounded-full bg-cyan-400 animate-pulse";
-      if (pipeText) pipeText.textContent = "HISTORICAL CASE STUDY (ERA5)";
+      if (pipeText) pipeText.textContent = "HISTORICAL CASE STUDY";
       if (btn) {
         btn.className = "btn-mode-switch flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer border border-slate-700";
       }
@@ -287,7 +400,7 @@
         banner.className = "operational-banner mode-banner-historical px-6 lg:px-8 flex items-center justify-between text-xs";
       }
       if (bannerDisclaimer) {
-        bannerDisclaimer.textContent = "SevereWeatherNet V2 Calibrated ML Case Study · Validated May 5, 2024 Pre-Monsoon Squall · Grid: 0.25° (~28 km)";
+        bannerDisclaimer.textContent = "StormSense ML Case Study · Validated May 5, 2024 Pre-Monsoon Squall · Grid: 0.25° (~28 km)";
       }
 
       if (deskModePill) {
@@ -296,7 +409,7 @@
       if (deskModeDot) deskModeDot.className = "size-2 rounded-full bg-cyan-400 animate-pulse";
       if (deskModeLabel) deskModeLabel.textContent = "HISTORICAL CASE STUDY — KALBAISHAKHI";
       if (deskSubtitle) {
-        deskSubtitle.textContent = "Historical convective case study (0–6 h) driven by SevereWeatherNet V2 Calibrated ML engine and real ERA5 thermodynamics (May 5, 2024).";
+        deskSubtitle.textContent = "Historical convective case study (0–6 h) driven by StormSense ML engine and real Atmospheric Data thermodynamics (May 5, 2024).";
       }
 
       if (refreshBox) refreshBox.style.display = "none";
@@ -322,8 +435,8 @@
       if (pipeBadge) {
         pipeBadge.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-mono font-bold";
       }
-      if (pipeDot) pipeDot.className = "size-1.5 rounded-full bg-amber-400 animate-pulse";
-      if (pipeText) pipeText.textContent = "OPERATIONAL ML INPUT PIPELINE PENDING";
+      if (pipeDot) pipeDot.className = "size-1.5 rounded-full bg-emerald-400 animate-pulse";
+      if (pipeText) pipeText.textContent = "AI FORECAST ACTIVE";
       if (btn) {
         btn.className = "btn-mode-switch flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold transition-all shadow-md shadow-cyan-600/25 cursor-pointer border border-cyan-400/40";
       }
@@ -352,7 +465,7 @@
         banner.className = "operational-banner mode-banner-live px-6 lg:px-8 flex items-center justify-between text-xs";
       }
       if (bannerDisclaimer) {
-        bannerDisclaimer.textContent = "Real-Time Station Monitoring · SevereWeatherNet ML Nowcast Input Unavailable in Real Time (ERA5 ~5d latency)";
+        bannerDisclaimer.textContent = "Live monitoring · AI-derived severe weather risk · Not an official government warning";
       }
 
       if (deskModePill) {
@@ -361,17 +474,19 @@
       if (deskModeDot) deskModeDot.className = "size-2 rounded-full bg-emerald-400 animate-pulse";
       if (deskModeLabel) deskModeLabel.textContent = "LIVE MONITORING";
       if (deskSubtitle) {
-        deskSubtitle.textContent = "Ambient surface telemetry (t=0) from OpenWeather station feed. Polled every 60s. SevereWeatherNet V2 ML nowcasting inputs are tracked below.";
+        deskSubtitle.textContent = "Current surface conditions and AI forecast risk. Updated every 5 minutes.";
       }
 
       if (refreshBox) refreshBox.style.display = "flex";
 
-      // Paint live dashboard data
+      // Current observations, then the live forecast products for the horizon
+      // that is already selected (mode switching must not reset the horizon).
       if (window.StormSenseLiveSurface) {
         paintDashboardLive(window.StormSenseLiveSurface.observations || {}, window.StormSenseLiveSurface);
       } else {
         window.fetchLiveSurfaceData(false);
       }
+      window.refreshLiveDashboard();
 
       // Update map layers
       updateMapMode("live");
@@ -400,8 +515,8 @@
       fetch(API_BASE + "/api/nowcast/summary?lead=" + lead).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/districts?lead=" + lead).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/risk-map?lead=" + lead).then(parseJson).catch(function () { return null; }),
-      fetch(API_BASE + "/api/nowcast/thermodynamics").then(parseJson).catch(function () { return null; }),
-      fetch(API_BASE + "/api/nowcast/xai").then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/thermodynamics" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/xai" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/boundaries/west-bengal").then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/boundaries/state").then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/benchmark/models").then(parseJson).catch(function () { return null; }),
@@ -411,7 +526,7 @@
     ])
       .then(function (results) {
         var currentObs = results[0];
-        var summary = results[1];
+        var summary = results[1];\n        window.StormSenseCurrentSummary = summary;
         var districts = results[2];
         var riskMap = results[3];
         var thermo = results[4];
@@ -480,11 +595,11 @@
       systemStatus: {
         clusterLabel: "ML Engine Online",
         slaLabel: "CALIBRATED",
-        versionLabel: "SevereWeatherNet V2 Calibrated",
+        versionLabel: "StormSense",
         deskLabel: "North 24 Parganas desk",
         freshnessLabel: "LIVE INGEST · t=0"
       },
-      disclaimer: "SevereWeatherNet V2 Calibrated spatial nowcasting. Multi-task ConvGRU evaluated on 4,322 held-out 2024 test sequences."
+      disclaimer: "StormSense spatial nowcasting. Multi-task ConvGRU evaluated on 4,322 held-out 2024 test sequences."
     };
 
     // Dynamic Time Derivation
@@ -551,7 +666,7 @@
           flashFloodPct: floodPct,
           confidencePct: d.confidence_pct != null ? d.confidence_pct : 92,
           isPrimary: d.is_primary || name === "North 24 Parganas",
-          note: d.note || "SevereWeatherNet V2 multi-cell risk aggregation.",
+          note: d.note || "StormSense multi-cell risk aggregation.",
           validUntil: d.valid_until || formatUtcDateTime(new Date(parseUtcIso(issueTime).getTime() + lead * 3600 * 1000))
         };
       });
@@ -574,8 +689,8 @@
     }
 
     if (xai) vm.explainability = xai;
-    vm.systemStatus.versionLabel = "SevereWeatherNet V2 Calibrated";
-    vm.disclaimer = "SevereWeatherNet V2 Calibrated spatial nowcasting. Multi-task ConvGRU evaluated on 4,322 held-out 2024 test sequences.";
+    vm.systemStatus.versionLabel = "StormSense";
+    vm.disclaimer = "StormSense spatial nowcasting. Multi-task ConvGRU evaluated on 4,322 held-out 2024 test sequences.";
 
     return vm;
   }
@@ -607,31 +722,31 @@
   }
 
   function getHazardTrend(prob) {
-    if (prob >= 75) return "Rising · Critical Convection";
-    if (prob >= 50) return "Rapid Development";
-    if (prob >= 25) return "Moderate Growth";
-    return "Stable · Nominal";
+    if (prob >= 75) return "HIGH RISK";
+    if (prob >= 50) return "ELEVATED";
+    if (prob >= 25) return "MONITOR";
+    return "LOW";
   }
 
   function getHazardDetail(hazardName, prob) {
-    if (prob >= 75) return "Extreme convective potential detected. Calibrated alert threshold exceeded for immediate response.";
-    if (prob >= 50) return "Elevated instability with strong boundary-layer moisture convergence.";
-    if (prob >= 25) return "Convective initiation monitored across local atmospheric column.";
-    return "Background ambient conditions; convective initiation probability remains subdued.";
+    if (prob >= 75) return hazardName + " conditions indicate high short-term risk.";
+    if (prob >= 50) return hazardName + " risk is elevated within the nowcast window.";
+    if (prob >= 25) return hazardName + " conditions require continued monitoring.";
+    return hazardName + " risk currently remains low.";
   }
 
   function getOverallAction(level) {
-    if (level === "red") return "Red Warning — Activate Emergency Response Protocol";
-    if (level === "orange") return "Orange Alert — Prepare Civil Defense & Field Units";
-    if (level === "yellow") return "Yellow Watch — Maintain Vigilance on Radar Streams";
-    return "Green Normal — Nominal Continuous Observation";
+    if (level === "red") return "WARNING - Activate Emergency Response Protocol";
+    if (level === "orange") return "ALERT - Prepare Civil Defense & Field Units";
+    if (level === "yellow") return "WATCH - Maintain Vigilance";
+    return "NORMAL - Nominal Observation";
   }
 
   function getOverallStage(level) {
-    if (level === "red") return "Stage 4 Red Warning";
-    if (level === "orange") return "Stage 3 Convective Alert";
-    if (level === "yellow") return "Stage 2 Instability Watch";
-    return "Stage 1 Ambient Monitoring";
+    if (level === "red") return "WARNING";
+    if (level === "orange") return "ALERT";
+    if (level === "yellow") return "WATCH";
+    return "NORMAL";
   }
 
   function getWindDirection(degrees) {
@@ -663,6 +778,92 @@
     }
   }
 
+  /**
+   * Paint the four forecast hazard cards and their meters from a summary
+   * payload. Shared by the horizon switcher and the 5-minute live refresh so
+   * both modes render through identical logic.
+   *
+   * These are FORECAST quantities. Current observed conditions are rendered
+   * separately (see paintDashboardLive) and must not be mixed in here.
+   */
+  function paintForecastCards(summary) {
+    if (!summary) return;
+    if (summary.status === 'unavailable') {
+        // Honest fallback
+        document.querySelectorAll('.hazard-probability').forEach(el => el.textContent = 'UNAVAILABLE');
+        document.querySelectorAll('.hazard-trend').forEach(el => el.textContent = summary.message || 'Pipeline pending');
+        return;
+    }
+    if (!summary.hazards) return;
+    var hz = summary.hazards;
+
+    if (hz.thunderstorm) applyHazardCard("kpi-ts", adaptHazard(hz.thunderstorm, "Thunderstorm"));
+
+    var rHz = hz.heavy_rainfall || hz.heavyRainfall;
+    if (rHz) {
+      setText("kpi-rain-title", "Heavy Rainfall Risk");
+      setText("kpi-rain-category", "Forecast precipitation");
+      var rainRate = rHz.rate_mm_3h != null ? rHz.rate_mm_3h : rHz.rain_3h_mm;
+      setText("kpi-rain-value", rainRate != null ? Number(rainRate).toFixed(1) + " mm" : rHz.probability + "%");
+      setText("kpi-rain-level", (rHz.level || "alert").toUpperCase());
+      setText("kpi-rain-trend", getHazardTrend(rHz.probability));
+      setText("kpi-rain-detail", getHazardDetail("Heavy Rainfall", rHz.probability));
+    }
+
+    var fHz = hz.flash_flood || hz.flashFlood;
+    if (fHz) applyHazardCard("kpi-flood", adaptHazard(fHz, "Flash Flood"));
+
+    if (hz.overall) {
+      var overallProb = getHazardProbability(hz.overall);
+      var overallLevel = hz.overall.level || probabilityToLevel(overallProb);
+      setText("kpi-overall-value", overallProb + "%");
+      setText("kpi-overall-level", overallLevel.toUpperCase());
+      setText("kpi-overall-action", getOverallAction(overallLevel));
+      setText("kpi-overall-stage", getOverallStage(overallLevel));
+      setWidth("kpi-overall-bar", overallProb);
+    }
+
+    var tsP = getHazardProbability(hz.thunderstorm);
+    setText("meter-ts-label", tsP + "%");
+    setWidth("meter-ts-bar", tsP);
+
+    var rP = rHz && rHz.rate_mm_3h != null ? rHz.rate_mm_3h : getHazardProbability(rHz);
+    var rPct = getHazardProbability(rHz);
+    setText("meter-rain-label", (typeof rP === "number" ? rP.toFixed(1) + " mm" : rP + "%"));
+    setWidth("meter-rain-bar", rPct);
+
+    var flP = getHazardProbability(hz.flash_flood);
+    setText("meter-flood-label", flP + "%");
+    setWidth("meter-flood-bar", flP);
+  }
+
+  function adaptDistricts(districts, lead, issueTime) {
+    return districts.map(function (d) {
+      var name = d.district || d.name;
+      var tstormPct = d.thunderstorm_pct != null ? d.thunderstorm_pct
+        : (d.thunderstorm_prob != null ? Math.round(d.thunderstorm_prob * 100) : 0);
+      var rainMm = d.heavy_rainfall_mm_3h != null ? Number(d.heavy_rainfall_mm_3h).toFixed(1)
+        : (d.rainfall_mm_3h != null ? Number(d.rainfall_mm_3h).toFixed(1) : 0);
+      var floodPct = d.flash_flood_pct != null ? d.flash_flood_pct
+        : (d.flash_flood_proxy_pct != null ? d.flash_flood_proxy_pct : 0);
+      return {
+        name: name,
+        district: name,
+        riskLevel: d.risk_level || d.riskLevel || "green",
+        overallPct: d.overall_pct != null ? d.overall_pct : Math.max(tstormPct, floodPct),
+        thunderstormPct: tstormPct,
+        heavyRainfallPct: rainMm,
+        flashFloodPct: floodPct,
+        confidencePct: d.confidence_pct != null ? d.confidence_pct : 92,
+        // Highest risk leads the list; no district is permanently "primary".
+        isPrimary: false,
+        note: d.body || "Multi-cell model risk aggregation.",
+        validUntil: d.valid_until ||
+          (issueTime ? formatUtcDateTime(new Date(parseUtcIso(issueTime).getTime() + lead * 3600 * 1000)) : "")
+      };
+    });
+  }
+
   function applyHazardCard(prefix, hazard) {
     if (!hazard) return;
     var cls = levelClass(hazard.level);
@@ -680,78 +881,41 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // Live Dashboard Painter (Genuine Surface Obs + Honest ML Unavailable States)
   // ─────────────────────────────────────────────────────────────────────────────
+  /**
+   * Paint CURRENT OBSERVED CONDITIONS only.
+   *
+   * This must never write the four forecast hazard cards -- those show model
+   * forecast risk and are painted by paintForecastCards(). Conflating the two
+   * is what previously made an observed "0.0 mm" reading appear as a heavy
+   * rainfall forecast.
+   */
   function paintDashboardLive(obs, rawLive) {
-    // Card 1: Atmospheric Hazard (Thunderstorm) -> Honest UNAVAILABLE
-    setText("kpi-ts-value", "UNAVAILABLE");
-    setText("kpi-ts-level", "NOT COMPUTED");
-    setText("kpi-ts-trend", "ERA5 ~5d Latency");
-    setText("kpi-ts-detail", "Real-time ML 3D inputs offline. No spatial prediction.");
-    var pillTs = document.getElementById("kpi-ts-level");
-    if (pillTs) pillTs.className = "px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono uppercase tracking-wider bg-slate-800 text-slate-400 border border-slate-700";
-
-    // Card 2: Surface Precipitation -> Genuine OpenWeather 1-Hour Gauge
     var rainMm = obs.rainfall_1h_mm != null ? Number(obs.rainfall_1h_mm).toFixed(1) : "0.0";
-    setText("kpi-rain-title", "Surface Precipitation");
-    setText("kpi-rain-category", "Live Station Ingest");
-    setText("kpi-rain-value", rainMm + " mm");
-    setText("kpi-rain-level", "LIVE GAUGE");
-    setText("kpi-rain-trend", "OpenWeather Feed");
-    setText("kpi-rain-detail", "1-hour station rainfall gauge at North 24 Parganas");
-    var pillRain = document.getElementById("kpi-rain-level");
-    if (pillRain) pillRain.className = "px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono uppercase tracking-wider bg-cyan-500/15 text-cyan-300 border border-cyan-500/30";
+    var tempC = obs.temperature_c != null ? obs.temperature_c.toFixed(1) : "—";
+    var hum = obs.humidity_pct != null ? obs.humidity_pct : "—";
+    var windSpd = obs.wind_speed_kmh != null ? obs.wind_speed_kmh.toFixed(1) : "—";
 
-    // Card 3: Hydrological Hazard (Flash Flood) -> Honest UNAVAILABLE
-    setText("kpi-flood-value", "UNAVAILABLE");
-    setText("kpi-flood-level", "NOT COMPUTED");
-    setText("kpi-flood-trend", "Proxy Offline");
-    setText("kpi-flood-detail", "Flash flood proxy requires operational ML rainfall nowcasting.");
-    var pillFlood = document.getElementById("kpi-flood-level");
-    if (pillFlood) pillFlood.className = "px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono uppercase tracking-wider bg-slate-800 text-slate-400 border border-slate-700";
-
-    // Card 4: Overall Hazard Level -> Honest Live ML Status (ERA5 reanalysis not available in real time)
-    var tempC = obs.temperature_c != null ? obs.temperature_c.toFixed(1) : "32.0";
-    var feelsC = obs.feels_like_c != null ? obs.feels_like_c.toFixed(1) : "36.0";
-    var hum = obs.humidity_pct != null ? obs.humidity_pct : "70";
-    var windSpd = obs.wind_speed_kmh != null ? obs.wind_speed_kmh.toFixed(1) : "16.0";
-    var weatherDesc = obs.weather_description || obs.weather || "Ambient Conditions";
-
-    setText("kpi-overall-title", "Overall Hazard Level");
-    setText("kpi-overall-category", "Combined Index");
-    setText("kpi-overall-value", "UNAVAILABLE");
-    setText("kpi-overall-level", "NOT COMPUTED");
-    setText("kpi-overall-stage", "Live ML Offline");
-    setText("kpi-overall-action", "Routine Station Monitoring");
-    setWidth("kpi-overall-bar", 0);
-    var pillOverall = document.getElementById("kpi-overall-level");
-    if (pillOverall) pillOverall.className = "px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono uppercase tracking-wider bg-slate-800 text-slate-400 border border-slate-700";
-
-    // Bottom telemetry strip
+    // Current-conditions telemetry strip
     setText("bind-temp", tempC + "°C");
     setText("bind-rain", rainMm + " mm");
     setText("bind-humidity", hum + "%");
     setText("bind-wind", windSpd + " km/h");
 
-    var liveSourceLabel = "Live observation · OpenWeather";
+    var liveSourceLabel = rawLive && rawLive.is_stale
+      ? "Surface observation · stale"
+      : "Surface observation";
     setText("bind-temp-source", liveSourceLabel);
     setText("bind-rain-source", liveSourceLabel);
     setText("bind-humidity-source", liveSourceLabel);
     setText("bind-wind-source", liveSourceLabel);
-
-    // Right-side hazard meters (honest live status)
-    setText("meter-ts-label", "UNAVAILABLE");
-    setWidth("meter-ts-bar", 0);
-    setText("meter-rain-label", rainMm + " mm");
-    setWidth("meter-rain-bar", Math.min(100, Math.round(Number(rainMm) * 10)));
-    setText("meter-flood-label", "UNAVAILABLE");
-    setWidth("meter-flood-bar", 0);
 
     var profLevel = document.getElementById("profile-level");
     if (profLevel) profLevel.innerHTML = '<span class="size-2 bg-emerald-400 rounded-full animate-pulse"></span> LIVE MONITORING';
 
     // Render Live timeline cards
     renderNowcastLive(rawLive);
-    setText("nowcast-timeline-title", "Current Surface Telemetry Parameters (North 24 Parganas)");
-    setText("nowcast-timeline-badge", "REAL-TIME · OpenWeather Feed");
+    setText("nowcast-timeline-title", "Current Conditions");
+    setText("nowcast-timeline-badge", "LIVE OBSERVATION");
 
     // Render Live High-Risk Grid notice
     renderHighRiskCellsLive();
@@ -760,7 +924,7 @@
     renderThermodynamicsLive(obs);
 
     // Render Live XAI notice
-    renderXaiLive();
+    // renderXaiLive();
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -808,7 +972,7 @@
           '<span class="material-symbols-outlined text-amber-400 text-2xl shrink-0 mt-0.5">info</span>' +
           '<div>' +
             '<div class="text-white font-bold text-sm mb-1">0.25° ML Spatial Predictions: Unavailable in Real-Time Mode</div>' +
-            '<p class="text-slate-400 font-sans leading-relaxed">SevereWeatherNet V2 multi-task ConvGRU requires 4D atmospheric tensors across 825 cells. ECMWF ERA5 reanalysis data has an inherent ~5-day latency and is not connected to real-time telemetry. In accordance with strict scientific authenticity rules, spatial risk grids are not fabricated.</p>' +
+            '<p class="text-slate-400 font-sans leading-relaxed">StormSense requires multi-dimensional atmospheric tensors across 825 cells. In live mode, this connects to real-time atmospheric data.</p>' +
           '</div>' +
         '</div>' +
         '<button onclick="window.switchMode(\'historical\')" class="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shrink-0 transition-colors cursor-pointer flex items-center gap-1.5 shadow-lg shadow-cyan-600/30">' +
@@ -826,7 +990,7 @@
     setText("thermo-li", pres + " hPa (Surface MSL)");
     setText("thermo-shear-label", "Ambient Surface Wind");
     setText("thermo-risk-badge", "LIVE AMBIENT");
-    setText("thermo-diagnostic", "Live station barometric pressure: " + pres + " hPa. Upper-air thermodynamic soundings (CAPE, CIN, bulk shear) require ERA5 vertical profiles (~5d latency) and are available in Historical Case Study mode.");
+    setText("thermo-diagnostic", "Live station barometric pressure: " + pres + " hPa. Upper-air thermodynamic soundings (CAPE, CIN, bulk shear) are currently available in Historical Case Study mode.");
   }
 
   function renderXaiLive() {
@@ -834,7 +998,7 @@
     if (!root) return;
     root.innerHTML =
       '<div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-xs font-mono text-slate-300 flex items-center justify-between flex-wrap gap-2">' +
-        '<span>Physical XAI Gradient Attribution is computed during active ML model inference on ERA5 atmospheric tensors.</span>' +
+        '<span>Physical Attribution is computed during active ML model inference on atmospheric tensors.</span>' +
         '<button onclick="window.switchMode(\'historical\')" class="text-cyan-400 hover:underline font-bold cursor-pointer">View Historical Attributions →</button>' +
       '</div>';
   }
@@ -928,7 +1092,7 @@
     if (data.timeline && data.timeline.length) {
       renderNowcast(data.timeline);
       setText("nowcast-timeline-title", "0-6 hour forecast inputs");
-      setText("nowcast-timeline-badge", "HISTORICAL · ERA5 Forcing");
+      setText("nowcast-timeline-badge", "HISTORICAL FORCING");
     }
 
     // Render Historical high-risk cells
@@ -983,7 +1147,7 @@
               '<p class="text-xs text-slate-300 leading-relaxed">' + b.body + '</p>' +
               '<div class="flex items-center gap-6 mt-3 text-[11px] text-slate-400 font-mono">' +
                 '<span>Valid Until: <strong class="text-white">' + (b.validUntil || "Upcoming Lead") + '</strong></span>' +
-                '<span>' + (b.issuer || "SevereWeatherNet Risk Engine") + '</span>' +
+                '<span>' + (b.issuer || "StormSense Risk Engine") + '</span>' +
               '</div>' +
             '</div>' +
           '</div>' +
@@ -1029,7 +1193,7 @@
       var rainVal = d.heavyRainfallPct != null ? d.heavyRainfallPct : (d.heavy_rainfall_mm_3h != null ? d.heavy_rainfall_mm_3h : (d.rainfall_mm != null ? d.rainfall_mm : 0));
       var floodPct = d.flashFloodPct != null ? d.flashFloodPct : (d.flash_flood_pct != null ? d.flash_flood_pct : 0);
       var overallPct = d.overallPct != null ? d.overallPct : (d.overall_pct != null ? d.overall_pct : 0);
-      var note = d.note || d.body || "SevereWeatherNet V2 multi-cell risk aggregation across district boundaries.";
+      var note = d.note || d.body || "StormSense multi-cell risk aggregation across district boundaries.";
       var isPrimary = d.isPrimary != null ? d.isPrimary : (d.is_primary || name === "North 24 Parganas");
       var cls = levelClass(riskLevel);
       var ring = isPrimary ? "border-2 border-cyan-500/80 shadow-cyan-500/10" : "border " + cls.border;
@@ -1098,6 +1262,16 @@
 
   function renderThermodynamics(thermo) {
     if (!thermo) return;
+    if (thermo.status === "unavailable") {
+        setText("thermo-cape", "Unavailable (Live)");
+        setText("thermo-cin", "Unavailable (Live)");
+        setText("thermo-shear", "Unavailable (Live)");
+        setText("thermo-li", "Unavailable");
+        setText("thermo-shear-label", "Ambient Surface Wind");
+        setText("thermo-risk-badge", "LIVE AMBIENT");
+        setText("thermo-diagnostic", thermo.message || "Thermodynamic profile is not yet computed for live mode.");
+        return;
+    }
     var cape = thermo.cape_surface != null ? thermo.cape_surface : thermo.cape_j_kg;
     if (cape != null) setText("thermo-cape", Math.round(cape).toLocaleString() + " J/kg");
 
@@ -1107,7 +1281,7 @@
     var shear = thermo.bulk_shear_0_6km_ms != null ? thermo.bulk_shear_0_6km_ms : thermo.bulk_shear_0_6km_mps;
     if (shear != null) setText("thermo-shear", Math.round(shear) + " m/s");
 
-    setText("thermo-li", "N/A (ERA5 Single Level)");
+    setText("thermo-li", "N/A (Single Level)");
 
     if (thermo.wind_shear_interpretation) setText("thermo-shear-label", thermo.wind_shear_interpretation);
     if (thermo.convective_risk) setText("thermo-risk-badge", thermo.convective_risk);
@@ -1251,7 +1425,10 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // Leaflet Geospatial Rendering Engine (Zero Watermarks, Public Free Dark Tiles)
   // ─────────────────────────────────────────────────────────────────────────────
-  window.WB_BOUNDS = [[21.5394, 86.6103], [26.9960, 89.8828]];
+  // MUST match WB_BOUNDS_LEAFLET in src/inference/risk_surface.py -- the risk
+  // surface PNG is georeferenced to exactly this box, so any mismatch stretches
+  // or offsets the forecast layer relative to the basemap.
+  window.WB_BOUNDS = [[21.5394, 85.8325], [27.2206, 89.8828]];
   window.gridInspectionMode = false;
 
   function renderStateBoundary(mapInstance, geojsonData) {
@@ -1307,7 +1484,10 @@
   function renderContinuousRiskSurface(mapInstance, leadHours) {
     if (!mapInstance || typeof L === "undefined") return;
     var lead = leadHours || window.currentLeadHours || 2;
-    var url = API_BASE + "/api/nowcast/risk-surface?lead=" + lead + "&t=" + Date.now();
+    // The surface must follow the selected mode as well as the selected horizon,
+    // otherwise live mode would display the historical case-study imagery.
+    var mode = window.stormSenseMode || "live";
+    var url = API_BASE + "/api/nowcast/risk-surface?lead=" + lead + "&mode=" + mode + "&t=" + Date.now();
 
     if (mapInstance._riskSurfaceOverlay) {
       mapInstance._riskSurfaceOverlay.setUrl(url);
@@ -1365,7 +1545,7 @@
           '<div style="margin-bottom:2px;display:flex;justify-content:space-between;"><span>3h Rainfall:</span><strong>' + Number(rain).toFixed(1) + ' mm</strong></div>' +
           '<div style="margin-bottom:4px;display:flex;justify-content:space-between;"><span>Flash Flood Proxy:</span><strong style="color:#fbbf24;">' + flood + '%</strong></div>' +
           '<div style="font-size:9px;color:#94a3b8;border-top:1px solid #1e293b;padding-top:4px;margin-top:4px;">' +
-            '<em>Model-Predicted High-Risk Cell (SevereWeatherNet V2 Calibrated) &middot; Not observed radar</em>' +
+            '<em>Model-Predicted High-Risk Cell (StormSense) &middot; Not observed radar</em>' +
           '</div>' +
         '</div>';
 
@@ -1537,7 +1717,7 @@
         '<div style="margin-bottom:2px;">Pressure: <strong>' + pres + ' hPa</strong></div>' +
         '<div style="margin-bottom:2px;">Wind: <strong>' + wind + ' km/h</strong></div>' +
         '<div style="margin-bottom:2px;">Condition: <strong>' + weather + '</strong></div>' +
-        '<div style="font-size:9px;color:#64748b;border-top:1px solid #1e293b;padding-top:4px;margin-top:4px;">Source: OpenWeather Live Feed &middot; Auto-refreshed (60s)</div>' +
+        '<div style="font-size:9px;color:#64748b;border-top:1px solid #1e293b;padding-top:4px;margin-top:4px;">Source: Live Feed &middot; Auto-refreshed (5m)</div>' +
       '</div>';
 
     var marker = L.marker([lat, lon], { icon: stationIcon }).bindPopup(popupHtml);
@@ -1568,7 +1748,7 @@
         '<div style="margin-bottom:2px;">Pressure: <strong>' + pres + ' hPa</strong></div>' +
         '<div style="margin-bottom:2px;">Wind: <strong>' + wind + ' km/h</strong></div>' +
         '<div style="margin-bottom:2px;">Condition: <strong>' + weather + '</strong></div>' +
-        '<div style="font-size:9px;color:#64748b;border-top:1px solid #1e293b;padding-top:4px;margin-top:4px;">Source: OpenWeather Live Feed &middot; Auto-refreshed (60s)</div>' +
+        '<div style="font-size:9px;color:#64748b;border-top:1px solid #1e293b;padding-top:4px;margin-top:4px;">Source: Live Feed &middot; Auto-refreshed (5m)</div>' +
       '</div>';
 
     window._liveStationMarker.setPopupContent(popupHtml);
@@ -1621,7 +1801,7 @@
       if (inspectBtn) inspectBtn.style.display = "";
     } else {
       // LIVE MODE
-      // Render continuous risk surface PNG (SevereWeatherNet V2 early warning nowcast)
+      // Render continuous risk surface PNG (StormSense early warning nowcast)
       renderContinuousRiskSurface(map, window.currentLeadHours || 2);
       // Add hotspot beacons
       if (window.StormSenseHighRiskCells) {
@@ -1635,7 +1815,7 @@
       renderLiveStationMarker(map, window.StormSenseLiveSurface);
 
       // Update Map HUD
-      if (hudTitle) hudTitle.textContent = "SEVEREWEATHERNET V2 NOWCAST (0.25° Grid)";
+      if (hudTitle) hudTitle.textContent = "STORMSENSE NOWCAST (0.25° Grid)";
       if (hudLead) {
         hudLead.textContent = "+" + (window.currentLeadHours || 2) + "h";
         hudLead.className = "text-cyan-400 font-bold";
@@ -1648,7 +1828,7 @@
           '<span class="px-2 py-0.5 bg-red-500 text-white rounded">≥75% Warning</span>';
       }
       var hudSubtext = document.getElementById("map-legend-subtext");
-      if (hudSubtext) hudSubtext.textContent = "Model Risk Probability · OPERATIONAL ML INPUT PIPELINE PENDING (ERA5 ~5d latency)";
+      if (hudSubtext) hudSubtext.textContent = "AI-derived severe weather risk · Not an official government warning";
       if (inspectBtn) inspectBtn.style.display = "";
     }
 
@@ -1696,7 +1876,7 @@
         var windVal = (t0.wind_kmh != null ? t0.wind_kmh : t0.wind_speed_kmh);
         var presVal = (t0.pressure_hpa != null ? t0.pressure_hpa : t0.surface_pressure_hpa);
         var rainVal = (p.heavy_rain_mm != null ? p.heavy_rain_mm : p.heavy_rainfall_mm);
-        var modelName = data.model_name || p.model || "SevereWeatherNet V2 Calibrated";
+        var modelName = data.model_name || p.model || "StormSense";
         var validTime = data.forecast_valid_utc || p.valid_time_utc || "";
 
         // Status pill for mode
@@ -1709,7 +1889,7 @@
           liveSection =
             '<div style="background:#064e3b40;border:1px solid #05966960;border-radius:6px;padding:6px;margin-bottom:6px;font-size:10px;">' +
               '<div style="color:#34d399;font-weight:bold;margin-bottom:2px;display:flex;justify-content:space-between;">' +
-                '<span>Live Station Telemetry (t=0):</span><span style="font-size:9px;color:#6ee7b7;">OpenWeather AWS</span>' +
+                '<span>Live Station Telemetry (t=0):</span><span style="font-size:9px;color:#6ee7b7;">Live Station</span>' +
               '</div>' +
               '<div style="display:flex;justify-content:space-between;"><span>Temp / Humidity:</span><strong>' + (liveTelemetry.temperature_c != null ? liveTelemetry.temperature_c + '°C' : '—') + ' / ' + (liveTelemetry.humidity_pct != null ? liveTelemetry.humidity_pct + '%' : '—') + '</strong></div>' +
               '<div style="display:flex;justify-content:space-between;"><span>Rain Gauge (1h):</span><strong>' + (liveTelemetry.rainfall_mm != null ? liveTelemetry.rainfall_mm + ' mm' : '0.0 mm') + '</strong></div>' +
@@ -1718,7 +1898,7 @@
         } else if (!isLive && t0) {
           liveSection =
             '<div style="background:#1e293b;border-radius:6px;padding:6px;margin-bottom:6px;font-size:10px;">' +
-              '<div style="color:#38bdf8;font-weight:bold;margin-bottom:2px;">ERA5 Physical Input (t=0):</div>' +
+              '<div style="color:#38bdf8;font-weight:bold;margin-bottom:2px;">Physical Input (t=0):</div>' +
               '<div style="display:flex;justify-content:space-between;"><span>Temp / RH:</span><strong>' + tempHum + '</strong></div>' +
               '<div style="display:flex;justify-content:space-between;"><span>Surface Wind:</span><strong>' + (windVal != null ? windVal + ' km/h' : '—') + '</strong></div>' +
               '<div style="display:flex;justify-content:space-between;"><span>MSL Pressure:</span><strong>' + (presVal != null ? presVal + ' hPa' : '—') + '</strong></div>' +
@@ -1738,7 +1918,7 @@
             '<div style="font-size:10px;color:#94a3b8;margin-bottom:6px;">Grid Cell: ' + (data.grid_cell ? data.grid_cell.lat.toFixed(2) + '°N, ' + data.grid_cell.lon.toFixed(2) + '°E' : lat.toFixed(2) + '°N, ' + lon.toFixed(2) + '°E') + '</div>' +
             liveSection +
             '<div style="background:#0f172a;border-radius:6px;padding:6px;border:1px solid #1e293b;margin-bottom:6px;font-size:11px;">' +
-              '<div style="color:#e2e8f0;font-weight:bold;margin-bottom:4px;font-size:10px;">SevereWeatherNet V2 Predictions:</div>' +
+              '<div style="color:#e2e8f0;font-weight:bold;margin-bottom:4px;font-size:10px;">StormSense Predictions:</div>' +
               '<div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span>Thunderstorm Risk:</span><strong style="color:' + color + ';">' + (p.thunderstorm_prob_pct != null ? p.thunderstorm_prob_pct + '%' : '—') + '</strong></div>' +
               '<div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span>Heavy Rain (3h):</span><strong>' + (rainVal != null ? rainVal + ' mm' : '—') + '</strong></div>' +
               '<div style="display:flex;justify-content:space-between;"><span>Flash Flood Proxy:</span><strong style="color:#fbbf24;">' + (p.flash_flood_proxy_pct != null ? p.flash_flood_proxy_pct + '%' : '—') + '</strong></div>' +
@@ -1823,17 +2003,77 @@
     // Set initial layer state for mode
     updateMapMode(window.stormSenseMode || "live");
 
-    // Fit bounds to complete West Bengal administrative outline!
-    if (map._stateBoundaryLayer) {
-      map.fitBounds(map._stateBoundaryLayer.getBounds(), { padding: [20, 20] });
-    } else {
-      map.fitBounds([[21.5394, 86.6103], [26.9960, 89.8828]], { padding: [20, 20] });
-    }
+    // Frame on the complete West Bengal outline, and keep it framed: without a
+    // pan/zoom constraint the surrounding region dominates the view and the map
+    // stops reading as a West Bengal forecast.
+    var wbBounds = map._stateBoundaryLayer
+      ? map._stateBoundaryLayer.getBounds()
+      : L.latLngBounds(window.WB_BOUNDS);
+    map.fitBounds(wbBounds, { padding: [20, 20] });
+    map.setMaxBounds(wbBounds.pad(0.35));
+    map.setMinZoom(map.getBoundsZoom(wbBounds));
 
+
+    if (!radarLayer) {
+        loadRainViewerRadar(map);
+    }
     return map;
   }
 
+
+
+  var radarLayer = null;
+  async function loadRainViewerRadar(map) {
+    var statusEl = document.getElementById("radar-status");
+    var infoEl = document.getElementById("radar-info");
+    var updateEl = document.getElementById("radar-last-update");
+
+    try {
+        if (statusEl) statusEl.textContent = "RADAR LOADING";
+
+        var response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+        if (!response.ok) throw new Error("RainViewer API returned HTTP " + response.status);
+        
+        var data = await response.json();
+        if (!data.radar || !data.radar.past || !data.radar.past.length) throw new Error("No radar frames available.");
+        
+        var latestFrame = data.radar.past[data.radar.past.length - 1];
+        
+        if (radarLayer && map) {
+            map.removeLayer(radarLayer);
+            radarLayer = null;
+        }
+
+        var tileUrl = data.host + latestFrame.path + "/256/{z}/{x}/{y}/2/1_1.png";
+        
+        if (map) {
+            radarLayer = L.tileLayer(tileUrl, {
+                opacity: 0.65,
+                zIndex: 400,
+                errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+                maxNativeZoom: 7,
+                maxZoom: 16,
+                attribution: 'Radar data by <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>'
+            });
+            radarLayer.addTo(map);
+        }
+
+        if (statusEl) statusEl.textContent = "RADAR READY";
+        if (infoEl) infoEl.textContent = "RainViewer precipitation radar connected";
+        if (updateEl) {
+            var scanTime = new Date(latestFrame.time * 1000);
+            updateEl.textContent = "Last Scan: " + scanTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        }
+    } catch (error) {
+        console.error("RainViewer radar error:", error);
+        if (statusEl) statusEl.textContent = "RADAR OFFLINE";
+        if (infoEl) infoEl.textContent = "Radar feed unavailable";
+        if (updateEl) updateEl.textContent = "Connection failed";
+    }
+  }
+
   function initRadarMap(data) {
+
     var mapContainer = document.getElementById("radar-map-container");
     if (!mapContainer || typeof L === "undefined" || window.stormSenseRadarMap) return;
 
@@ -1868,8 +2108,13 @@
       map.fitBounds([[21.5394, 86.6103], [26.9960, 89.8828]], { padding: [15, 15] });
     }
 
+
+    if (!radarLayer) {
+        loadRainViewerRadar(map);
+    }
     return map;
   }
+
 
   // ─────────────────────────────────────────────────────────────────────────────
   // View Switcher & Horizon Controller
@@ -1940,94 +2185,44 @@
     });
 
     var modeLabel = window.stormSenseMode === "live" ? "Live early warning" : "Historical validation";
-    window.showToast("SevereWeatherNet V2: loading +" + lead + "h horizon (" + modeLabel + ")...", "radar");
+    window.showToast("StormSense: loading +" + lead + "h horizon (" + modeLabel + ")...", "radar");
+
+    // Every request carries the active mode: without it the backend defaults to
+    // the historical case study and a Live horizon switch would silently show
+    // historical values while the UI still said "Live".
+    var modeQS = "&mode=" + (window.stormSenseMode || "live");
 
     Promise.all([
-      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead).then(parseJson).catch(function () { return null; }),
-      fetch(API_BASE + "/api/nowcast/districts?lead=" + lead).then(parseJson).catch(function () { return null; }),
-      fetch(API_BASE + "/api/nowcast/risk-map?lead=" + lead).then(parseJson).catch(function () { return null; }),
-      fetch(API_BASE + "/api/nowcast/high-risk-cells?lead=" + lead + "&top_k=8").then(parseJson).catch(function () { return null; })
+      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/districts?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/risk-map?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/high-risk-cells?lead=" + lead + "&top_k=8" + modeQS).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/xai" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/thermodynamics" + "?mode=" + (window.stormSenseMode || "live")).then(parseJson).catch(function () { return null; })
     ])
       .then(function (results) {
-        var summary = results[0];
+        var summary = results[0];\n        window.StormSenseCurrentSummary = summary;
         var districts = results[1];
         var riskMap = results[2];
         var cells = results[3];
 
         var issueTime = (summary && summary.issue_time) || "2024-05-05T15:00:00Z";
         updateDynamicTimes(issueTime, lead);
+        applyRegionState(summary);
 
-        if (window.stormSenseMode === "historical") {
-          if (summary && summary.hazards) {
-            window.StormSenseNowcastData = summary;
-            var hz = summary.hazards;
-
-          if (hz.thunderstorm) applyHazardCard("kpi-ts", adaptHazard(hz.thunderstorm, "Thunderstorm"));
-          var rHz = hz.heavy_rainfall || hz.heavyRainfall;
-          if (rHz) {
-            setText("kpi-rain-title", "Heavy Rainfall");
-            setText("kpi-rain-category", "Precipitation Hazard");
-            var rainRate = rHz.rate_mm_3h != null ? rHz.rate_mm_3h : rHz.rain_3h_mm;
-            var rainVal = rainRate != null ? Number(rainRate).toFixed(1) + " mm" : rHz.probability + "%";
-            setText("kpi-rain-value", rainVal);
-            setText("kpi-rain-level", (rHz.level || "alert").toUpperCase());
-            setText("kpi-rain-trend", getHazardTrend(rHz.probability));
-            setText("kpi-rain-detail", getHazardDetail("Heavy Rainfall", rHz.probability));
-          }
-          var fHz = hz.flash_flood || hz.flashFlood;
-          if (fHz) applyHazardCard("kpi-flood", adaptHazard(fHz, "Flash Flood"));
-
-          if (hz.overall) {
-            var overallProb = getHazardProbability(hz.overall);
-            var overallLevel = hz.overall.level || probabilityToLevel(overallProb);
-            setText("kpi-overall-value", overallProb + "%");
-            setText("kpi-overall-level", overallLevel.toUpperCase());
-            setText("kpi-overall-action", getOverallAction(overallLevel));
-            setText("kpi-overall-stage", getOverallStage(overallLevel));
-            setWidth("kpi-overall-bar", overallProb);
-          }
-
-          // Update right-side hazard meters
-          var tsP = getHazardProbability(hz.thunderstorm);
-          setText("meter-ts-label", tsP + "%");
-          setWidth("meter-ts-bar", tsP);
-
-          var rP = rHz && rHz.rate_mm_3h != null ? rHz.rate_mm_3h : getHazardProbability(rHz);
-          var rPct = getHazardProbability(rHz);
-          setText("meter-rain-label", (typeof rP === "number" ? rP.toFixed(1) + " mm" : rP + "%"));
-          setWidth("meter-rain-bar", rPct);
-
-          var flP = getHazardProbability(hz.flash_flood);
-          setText("meter-flood-label", flP + "%");
-          setWidth("meter-flood-bar", flP);
-
+        // Paint the hazard cards from whichever mode actually returned a
+        // forecast. Previously this was gated on historical mode only, so live
+        // predictions were fetched and then thrown away.
+        if (summary && summary.hazards) {
+          window.StormSenseNowcastData = summary;
+          paintForecastCards(summary);
           if (summary.timeline) renderNowcast(summary.timeline);
-          }
         }
+        applyFreshnessState(summary);
 
         if (districts && districts.length) {
           window.StormSenseDistrictsData = districts;
-          var vmDistricts = districts.map(function (d) {
-            var name = d.district || d.name;
-            var level = d.risk_level || d.riskLevel || "green";
-            var tstormPct = d.thunderstorm_pct != null ? d.thunderstorm_pct : (d.thunderstorm_prob != null ? Math.round(d.thunderstorm_prob * 100) : 0);
-            var rainMm = d.rainfall_mm_3h != null ? Number(d.rainfall_mm_3h).toFixed(1) : 0;
-            var floodPct = d.flash_flood_proxy_pct != null ? d.flash_flood_proxy_pct : (d.flash_flood_proxy != null ? Math.round(d.flash_flood_proxy * 100) : 0);
-            return {
-              name: name,
-              district: name,
-              riskLevel: level,
-              overallPct: d.overall_risk_pct || Math.max(tstormPct, floodPct),
-              thunderstormPct: tstormPct,
-              heavyRainfallPct: rainMm,
-              flashFloodPct: floodPct,
-              confidencePct: d.confidence_pct != null ? d.confidence_pct : 92,
-              isPrimary: d.is_primary || name === "North 24 Parganas",
-              note: d.note || "SevereWeatherNet V2 multi-cell risk aggregation.",
-              validUntil: d.valid_until || formatUtcDateTime(new Date(parseUtcIso(issueTime).getTime() + lead * 3600 * 1000))
-            };
-          });
-          renderDistricts(vmDistricts);
+          renderDistricts(adaptDistricts(districts, lead, issueTime));
         }
 
         if (cells) {
@@ -2044,8 +2239,16 @@
           if (cells) renderHotspotBeacons(window.stormSenseMap, cells);
           if (riskMap && window.gridInspectionMode) renderInspectionGrid(window.stormSenseMap, riskMap);
         }
+        var xai = results[4];
+        if (xai) {
+            if (typeof renderXai === 'function') renderXai(xai);
+        }
+        var thermo = results[5];
+        if (thermo) {
+            if (typeof renderThermodynamics === 'function') renderThermodynamics(thermo);
+        }
 
-        window.showToast("SevereWeatherNet Nowcast updated: +" + lead + "h lead time", "check_circle");
+        window.showToast("StormSense Nowcast updated: +" + lead + "h lead time", "check_circle");
       })
       .catch(function (err) {
         console.error("Failed to load horizon nowcast:", err);
@@ -2106,12 +2309,17 @@
     }, 4000);
   };
 
+  // Map-navigation shortcuts only. Keys must match the #sector-selector option
+  // values, and this control must never change which region is monitored --
+  // that is always the whole state.
   var SECTOR_COORDS = {
-    "Barasat Sadar": [22.724, 88.479],
-    "Barrackpore": [22.760, 88.370],
-    "Basirhat": [22.657, 88.867],
-    "Bongaon": [23.048, 88.828],
-    "Bidhannagar": [22.580, 88.420]
+    "Darjeeling / Kalimpong": [27.02, 88.35],
+    "Jalpaiguri / Alipurduar": [26.50, 89.10],
+    "Malda / Murshidabad": [24.60, 88.20],
+    "Purulia / Bankura": [23.28, 86.70],
+    "Purba Bardhaman & Damodar": [23.24, 87.86],
+    "North 24 Parganas Delta": [22.724, 88.479],
+    "Kolkata Metropolitan Area": [22.572, 88.363]
   };
 
   window.handleMyLocationClick = function () {
@@ -2183,20 +2391,23 @@
       // Render dashboard based on active mode
       updateModeUI(window.stormSenseMode);
 
-      // Auto-refresh timer every 60s
+      // Live auto-refresh. Timers are cleared first so repeated initialisation
+      // can never leave two intervals running and double up requests.
+      if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+
       liveRefreshTimer = setInterval(function () {
         if (window.stormSenseMode === "live") {
-          window.fetchLiveSurfaceData(false);
-          fetchDataHealth();
+          window.refreshLiveDashboard();
         }
-      }, 60000);
+      }, LIVE_REFRESH_MS);
 
       // Countdown ticker for next auto-refresh
       countdownTimer = setInterval(function () {
         if (window.stormSenseMode === "live") {
           liveCountdownSeconds = Math.max(0, liveCountdownSeconds - 1);
-          setText("live-refresh-countdown", liveCountdownSeconds + "s");
-          if (liveCountdownSeconds === 0) liveCountdownSeconds = 60;
+          setText("live-refresh-countdown", formatCountdown(liveCountdownSeconds));
+          if (liveCountdownSeconds === 0) liveCountdownSeconds = LIVE_REFRESH_MS / 1000;
         }
       }, 1000);
 
@@ -2240,7 +2451,7 @@
           issuing_office: "India Meteorological Department, Regional Meteorological Centre, Kolkata",
           target_region: "Gangetic West Bengal (20.0°N–28.0°N, 84.0°E–90.0°E)",
           primary_district: "North 24 Parganas",
-          model_system: "SevereWeatherNet V2 Calibrated (Multi-Task ConvGRU Deep Learning Nowcaster)",
+          model_system: "StormSense (Multi-Task Deep Learning Nowcaster)",
           model_checkpoint: "v2_calibrated_best.pt",
           verified_test_metrics_2024: {
             test_split: "May–October 2024 Convective Season (4,322 Sequences)",
@@ -2261,26 +2472,52 @@
         var url = URL.createObjectURL(blob);
         var a = document.createElement("a");
         a.href = url;
-        a.download = "IMD_SevereWeatherNet_Nowcast_Bulletin_" + lead + "h.json";
+        a.download = "StormSense_Nowcast_Bulletin_" + lead + "h.json";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        window.showToast("Exported IMD SevereWeatherNet Bulletin (+" + lead + "h)", "check_circle");
+        window.showToast("Exported StormSense Bulletin (+" + lead + "h)", "check_circle");
       });
     }
 
-    // Sector Selector
+    // Map navigation shortcut. Moves the viewport only -- it does not change the
+    // monitored region, the forecast, or any displayed risk value.
     var sectorSelect = document.getElementById("sector-selector");
     if (sectorSelect) {
       sectorSelect.addEventListener("change", function () {
-        var selected = this.value;
-        var coords = SECTOR_COORDS[selected] || [22.724, 88.479];
-        if (window.stormSenseMap) {
-          window.stormSenseMap.flyTo(coords, 11);
+        if (!window.stormSenseMap) return;
+        var coords = SECTOR_COORDS[this.value];
+        if (coords) {
+          window.stormSenseMap.flyTo(coords, 9);
+          window.showToast("Map centred on " + this.value, "radar");
+        } else {
+          window.stormSenseMap.fitBounds(L.latLngBounds(window.WB_BOUNDS), { padding: [20, 20] });
+          window.showToast("Map centred on West Bengal", "radar");
         }
-        window.showToast("Active Nowcasting Sector switched: " + selected, "radar");
       });
     }
   });
 })();
+
+
+  window.forceLiveRefresh = function() {
+      var btn = document.getElementById("btn-refresh-live");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      var originalText = btn.innerHTML;
+      btn.innerHTML = '<span class="material-symbols-outlined text-[14px] animate-spin">sync</span><span>REFRESHING...</span>';
+
+      fetch(API_BASE + "/api/live/refresh", { method: 'POST' })
+        .then(parseJson)
+        .then(function(res) {
+             btn.innerHTML = originalText;
+             btn.disabled = false;
+             window.refreshLiveDashboard();
+        })
+        .catch(function(err) {
+             btn.innerHTML = originalText;
+             btn.disabled = false;
+             console.error("Manual refresh failed:", err);
+        });
+  };
