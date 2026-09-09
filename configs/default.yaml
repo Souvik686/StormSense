@@ -1,0 +1,108 @@
+# Default configuration for the Hyper-Local Severe Weather Nowcasting system.
+# All paths are relative to project root unless absolute. Override any field
+# via a second YAML passed to scripts (deep-merged) or CLI --set key=value.
+
+project:
+  name: "sih-severe-weather-nowcast"
+  seed: 42
+
+paths:
+  data_root: "Data"                     # raw data (read-only, never modified)
+  processed_root: "processed"           # generated tensors / parquet / zarr
+  outputs_root: "outputs"               # checkpoints, predictions, figures
+  reports_root: "reports"
+  cache_root: "processed/cache"
+
+domain:
+  # West Bengal + surrounding synoptic context, matching ERA5 download extent.
+  lat_min: 20.0
+  lat_max: 28.0
+  lon_min: 84.0
+  lon_max: 90.0
+  resolution_deg: 0.25                  # native ERA5 grid spacing
+  grid_shape: [33, 25]                  # [n_lat, n_lon] at 0.25 deg, inclusive bounds
+
+era5:
+  pressure_levels_dir: "ERA5/pressure_levels"
+  single_levels_dir: "ERA5/single_levels"
+  pressure_levels_hpa: [1000, 850, 700, 500, 300, 250]
+  pressure_vars: ["u", "v", "z", "q", "t"]
+  # u,v exist at 1000/850/700; z,q,t exist at 700/500/300/250 (see docs/DATA_INVENTORY.md)
+  single_vars_instant: ["u10", "v10", "d2m", "t2m", "sp", "cape", "cin", "tcwv"]
+  single_vars_accum: ["tp"]             # total precipitation, meters/hour in raw files
+  season_months: [5, 6, 7, 8, 9, 10]    # May-Oct: the only months with downloaded data
+  years: [2021, 2022, 2023, 2024]
+
+dem:
+  srtm_dir: "DEM/SRTM"
+  target_resolution_deg: 0.25           # downsampled to match ERA5 grid for fusion
+
+insat:
+  hem_dir: "INSAT/HEM"
+  uth_dir: "INSAT/UTH"
+  ctp_dir: "INSAT/CTP"
+  cmk_dir: "INSAT/CMK"
+  # INSAT observation window barely overlaps ERA5 (93 hours, 2 cyclone events only).
+  # NOT used as a training input/target. Retained for a qualitative case-study
+  # visualization only. See docs/DATA_COMPATIBILITY.md.
+  use_for_training: false
+
+boundaries:
+  west_bengal_geojson: "BOUNDARIES/west_bengal.geojson"
+  west_bengal_districts_geojson: "BOUNDARIES/west_bengal_districts.geojson"
+  north_24_parganas_geojson: "BOUNDARIES/north_24_parganas.geojson"
+
+labels:
+  # Severe-weather / heavy-rain proxy definition (data-driven thresholds,
+  # derived from the empirical ERA5 tp distribution over the domain;
+  # see docs/ML_DESIGN.md section "Label thresholds").
+  heavy_rain_3h_mm: 15.0                # 3-hour accumulated precip threshold (~p99.3)
+  extreme_rain_3h_mm: 30.0              # ~p99.9, used for a secondary severity tier
+  cape_severe_jkg: 2000.0               # strong-instability threshold (~p88)
+  cin_weak_jkg: 50.0                    # weak-CIN = convection not suppressed
+  rolling_window_hours: 3
+
+sequence:
+  input_hours: 6                        # lookback window fed to the model
+  lead_times_hours: [2, 3, 4, 5, 6]      # multi-horizon forecast targets
+  stride_hours: 1                       # sliding-window sample stride
+
+split:
+  # Chronological, event-aware split: whole months held out, never split
+  # mid-event. Test years are fully unseen during training/validation.
+  train_years: [2021, 2022]
+  val_year: 2023
+  test_year: 2024
+  buffer_hours: 6                       # gap dropped at split boundaries to avoid leakage via input windows
+
+normalization:
+  method: "zscore"
+  stats_file: "processed/cache/norm_stats.json"
+  fit_on: "train"                       # never fit on val/test
+
+dataloader:
+  batch_size: 32
+  # num_workers>0 requires the launching script to guard entry with
+  # `if __name__ == "__main__":` on Windows (multiprocessing "spawn" model).
+  # Colab/Linux training does not have this restriction -- set higher there
+  # (e.g. 2-4) via --set dataloader.num_workers=4.
+  num_workers: 0
+  pin_memory: true
+
+training:
+  epochs: 60
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  warmup_epochs: 3
+  early_stopping_patience: 10
+  grad_clip_norm: 1.0
+  mixed_precision: true
+  checkpoint_dir: "outputs/checkpoints"
+  log_dir: "outputs/logs"
+  resume: true
+
+evaluation:
+  metrics: ["precision", "recall", "f1", "roc_auc", "pr_auc", "pod", "far", "csi", "mae", "rmse"]
+  per_lead_time: true

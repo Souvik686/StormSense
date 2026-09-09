@@ -1,0 +1,1063 @@
+{
+  "generated": "2026-09-08T18:59:10",
+  "root": "D:\\Weather-Hackathon\\Data",
+  "INSAT": {
+    "HEM": {
+      "n_files": 483,
+      "size_mb": 4879.7,
+      "n_timestamps": 483,
+      "dates": [
+        "2020-05-21",
+        "2020-05-22",
+        "2021-05-23",
+        "2021-05-26",
+        "2021-05-27",
+        "2022-04-16",
+        "2022-04-17",
+        "2022-04-18",
+        "2024-03-30",
+        "2024-03-31",
+        "2024-04-01",
+        "2024-05-27",
+        "2024-05-28",
+        "2024-05-29"
+      ],
+      "modal_gap_min": 30,
+      "variables": {
+        "GeoX": {
+          "shape": [
+            2805
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "GeoY": {
+          "shape": [
+            2816
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "HEM": {
+          "shape": [
+            1,
+            2816,
+            2805
+          ],
+          "dtype": "float32",
+          "long_name": "Hydro Estimator Precipitation",
+          "units": "mm/hr",
+          "fill_value": -999.0
+        },
+        "Latitude": {
+          "shape": [
+            2816,
+            2805
+          ],
+          "dtype": "int16",
+          "long_name": "latitude",
+          "units": "degrees_north",
+          "fill_value": 32767.0
+        },
+        "Longitude": {
+          "shape": [
+            2816,
+            2805
+          ],
+          "dtype": "int16",
+          "long_name": "longitude",
+          "units": "degrees_east",
+          "fill_value": 32767.0
+        },
+        "time": {
+          "shape": [
+            1
+          ],
+          "dtype": "float64",
+          "long_name": "",
+          "units": "minutes since 2000-01-01 00:00:00",
+          "fill_value": null
+        }
+      },
+      "satellite": "INSAT-3DR",
+      "nadir_lat_lon": [
+        0.0,
+        74.0
+      ],
+      "lat_range": [
+        -81.03999818861485,
+        81.03999818861485
+      ],
+      "lon_range": [
+        -7.149999840185046,
+        155.14999653212726
+      ],
+      "grid": "geostationary projection; per-pixel lat/lon stored int16 x0.01 deg"
+    },
+    "UTH": {
+      "n_files": 482,
+      "size_mb": 2551.5,
+      "n_timestamps": 482,
+      "dates": [
+        "2020-05-21",
+        "2020-05-22",
+        "2021-05-23",
+        "2021-05-26",
+        "2021-05-27",
+        "2022-04-16",
+        "2022-04-17",
+        "2022-04-18",
+        "2024-03-30",
+        "2024-03-31",
+        "2024-04-01",
+        "2024-05-27",
+        "2024-05-28",
+        "2024-05-29"
+      ],
+      "modal_gap_min": 30,
+      "variables": {
+        "GeoX": {
+          "shape": [
+            1402
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "GeoY": {
+          "shape": [
+            1408
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "Latitude": {
+          "shape": [
+            1408,
+            1402
+          ],
+          "dtype": "int16",
+          "long_name": "latitude",
+          "units": "degrees_north",
+          "fill_value": 32767.0
+        },
+        "Longitude": {
+          "shape": [
+            1408,
+            1402
+          ],
+          "dtype": "int16",
+          "long_name": "longitude",
+          "units": "degrees_east",
+          "fill_value": 32767.0
+        },
+        "UTH": {
+          "shape": [
+            1,
+            1408,
+            1402
+          ],
+          "dtype": "float32",
+          "long_name": "Upper Troposphere Humidity",
+          "units": "%",
+          "fill_value": -999.0
+        },
+        "time": {
+          "shape": [
+            1
+          ],
+          "dtype": "float64",
+          "long_name": "",
+          "units": "minutes since 2000-01-01 00:00:00",
+          "fill_value": null
+        }
+      },
+      "satellite": "INSAT-3DR",
+      "nadir_lat_lon": [
+        0.0,
+        74.0
+      ],
+      "lat_range": [
+        -80.87999819219112,
+        80.87999819219112
+      ],
+      "lon_range": [
+        -6.919999845325947,
+        154.91999653726816
+      ],
+      "grid": "geostationary projection; per-pixel lat/lon stored int16 x0.01 deg"
+    },
+    "CTP": {
+      "n_files": 469,
+      "size_mb": 1043.6,
+      "n_timestamps": 469,
+      "dates": [
+        "2020-05-21",
+        "2020-05-22",
+        "2021-05-23",
+        "2021-05-26",
+        "2021-05-27",
+        "2022-04-16",
+        "2022-04-17",
+        "2022-04-18",
+        "2024-03-30",
+        "2024-03-31",
+        "2024-04-01",
+        "2024-05-27",
+        "2024-05-28",
+        "2024-05-29"
+      ],
+      "modal_gap_min": 30,
+      "variables": {
+        "CLRFR_MIR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Fractional Clear Area for MIR",
+          "units": "",
+          "fill_value": -999.0
+        },
+        "CLRFR_TIR1": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Fractional Clear Area for TIR1",
+          "units": "",
+          "fill_value": -999.0
+        },
+        "CLRFR_TIR2": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Fractional Clear Area for TIR2",
+          "units": "",
+          "fill_value": -999.0
+        },
+        "CLRFR_WVR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Fractional Clear Area for WVR",
+          "units": "",
+          "fill_value": -999.0
+        },
+        "CSBT_Latitude": {
+          "shape": [
+            325,
+            325
+          ],
+          "dtype": "int16",
+          "long_name": "csbt_latitude",
+          "units": "degrees_north",
+          "fill_value": 31172.0
+        },
+        "CSBT_Longitude": {
+          "shape": [
+            325,
+            325
+          ],
+          "dtype": "int16",
+          "long_name": "csbt_longitude",
+          "units": "degrees_east",
+          "fill_value": 31172.0
+        },
+        "CSBT_MIR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT for MIR",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "CSBT_TIR1": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT for TIR1",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "CSBT_TIR2": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT for TIR2",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "CSBT_WVR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT for Water Vapour",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "CTP": {
+          "shape": [
+            1,
+            313,
+            312
+          ],
+          "dtype": "float32",
+          "long_name": "Cloud Top Pressure",
+          "units": "hPa",
+          "fill_value": -999.0
+        },
+        "CTT": {
+          "shape": [
+            1,
+            313,
+            312
+          ],
+          "dtype": "float32",
+          "long_name": "Cloud Top Temperature",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "EFF_EMISS": {
+          "shape": [
+            1,
+            313,
+            312
+          ],
+          "dtype": "float32",
+          "long_name": "Effective Cloud Emissivity",
+          "units": "NA",
+          "fill_value": -999.0
+        },
+        "GeoX": {
+          "shape": [
+            312
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "GeoX_csbt": {
+          "shape": [
+            325
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "GeoY": {
+          "shape": [
+            313
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "GeoY_csbt": {
+          "shape": [
+            325
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "Latitude": {
+          "shape": [
+            313,
+            312
+          ],
+          "dtype": "int16",
+          "long_name": "latitude",
+          "units": "degrees_north",
+          "fill_value": 31172.0
+        },
+        "Longitude": {
+          "shape": [
+            313,
+            312
+          ],
+          "dtype": "int16",
+          "long_name": "longitude",
+          "units": "degrees_east",
+          "fill_value": 31172.0
+        },
+        "OFLG_MIR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "int32",
+          "long_name": "Clear Sky BT Confidence Flag",
+          "units": "NA",
+          "fill_value": -999.0
+        },
+        "OFLG_TIR1": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "int32",
+          "long_name": "Clear Sky BT Confidence Flag",
+          "units": "NA",
+          "fill_value": -999.0
+        },
+        "OFLG_TIR2": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "int32",
+          "long_name": "Clear Sky BT Confidence Flag",
+          "units": "NA",
+          "fill_value": -999.0
+        },
+        "OFLG_WVR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "int32",
+          "long_name": "Clear Sky BT Confidence Flag",
+          "units": "NA",
+          "fill_value": -999.0
+        },
+        "SAT_ZEN": {
+          "shape": [
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "sat_zen",
+          "units": "degrees_north",
+          "fill_value": -999.0
+        },
+        "SOL_ZEN": {
+          "shape": [
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "sun_zen",
+          "units": "degrees_east",
+          "fill_value": -999.0
+        },
+        "STDV_MIR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT Standard Deviation",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "STDV_TIR1": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT Standard Deviation",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "STDV_TIR2": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT Standard Deviation",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "STDV_WVR": {
+          "shape": [
+            1,
+            325,
+            325
+          ],
+          "dtype": "float32",
+          "long_name": "Clear Sky BT Standard Deviation",
+          "units": "K",
+          "fill_value": -999.0
+        },
+        "time": {
+          "shape": [
+            1
+          ],
+          "dtype": "float64",
+          "long_name": "",
+          "units": "minutes since 2000-01-01 00:00:00",
+          "fill_value": null
+        }
+      },
+      "satellite": "INSAT-3DR",
+      "nadir_lat_lon": [
+        0.0,
+        82.0
+      ],
+      "lat_range": [
+        -79.2899982277304,
+        78.73999824002385
+      ],
+      "lon_range": [
+        -6.2799998596310616,
+        154.33999655023217
+      ],
+      "grid": "geostationary projection; per-pixel lat/lon stored int16 x0.01 deg"
+    },
+    "CMK": {
+      "n_files": 369,
+      "size_mb": 3543.6,
+      "n_timestamps": 369,
+      "dates": [
+        "2021-05-23",
+        "2021-05-26",
+        "2021-05-27",
+        "2022-04-16",
+        "2022-04-17",
+        "2022-04-18",
+        "2024-03-30",
+        "2024-03-31",
+        "2024-04-01",
+        "2024-05-27",
+        "2024-05-28",
+        "2024-05-29"
+      ],
+      "modal_gap_min": 30,
+      "variables": {
+        "CMK": {
+          "shape": [
+            1,
+            2816,
+            2805
+          ],
+          "dtype": "int8",
+          "long_name": "Cloud Mask",
+          "units": "",
+          "fill_value": 9.0
+        },
+        "GeoX": {
+          "shape": [
+            2805
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "GeoY": {
+          "shape": [
+            2816
+          ],
+          "dtype": "int32",
+          "long_name": "",
+          "units": "",
+          "fill_value": null
+        },
+        "Latitude": {
+          "shape": [
+            2816,
+            2805
+          ],
+          "dtype": "int16",
+          "long_name": "latitude",
+          "units": "degrees_north",
+          "fill_value": 32767.0
+        },
+        "Longitude": {
+          "shape": [
+            2816,
+            2805
+          ],
+          "dtype": "int16",
+          "long_name": "longitude",
+          "units": "degrees_east",
+          "fill_value": 32767.0
+        },
+        "time": {
+          "shape": [
+            1
+          ],
+          "dtype": "float64",
+          "long_name": "",
+          "units": "minutes since 2000-01-01 00:00:00",
+          "fill_value": null
+        }
+      },
+      "satellite": "INSAT-3DR",
+      "nadir_lat_lon": [
+        0.0,
+        74.0
+      ],
+      "lat_range": [
+        -81.03999818861485,
+        81.03999818861485
+      ],
+      "lon_range": [
+        -7.149999840185046,
+        155.14999653212726
+      ],
+      "grid": "geostationary projection; per-pixel lat/lon stored int16 x0.01 deg"
+    }
+  },
+  "ERA5": {
+    "pressure_levels": {
+      "n_files": 48,
+      "size_mb": 490.8,
+      "groups": {
+        "u+v @ 1000/850/700 hPa": 24,
+        "q+t+z @ 700/500/300/250 hPa": 24
+      },
+      "n_hours": 17472,
+      "t_min": "2021-05-01 00:00:00",
+      "t_max": "2024-10-30 23:00:00",
+      "lat": [
+        20.0,
+        28.0
+      ],
+      "lon": [
+        84.0,
+        90.0
+      ],
+      "shape_latlon": [
+        33,
+        25
+      ],
+      "res_deg": 0.25,
+      "freq": "hourly"
+    },
+    "single_levels": {
+      "n_zips": 8,
+      "size_mb": 241.7,
+      "members": {
+        "accum": {
+          "variables": [
+            "tp"
+          ],
+          "units": {
+            "tp": "m"
+          },
+          "n_hours": 17664,
+          "t_min": "2021-05-01 00:00:00",
+          "t_max": "2024-10-31 23:00:00"
+        },
+        "instant": {
+          "variables": [
+            "cape",
+            "cin",
+            "d2m",
+            "sp",
+            "t2m",
+            "tcwv",
+            "u10",
+            "v10"
+          ],
+          "units": {
+            "u10": "m s**-1",
+            "v10": "m s**-1",
+            "d2m": "K",
+            "t2m": "K",
+            "sp": "Pa",
+            "cape": "J kg**-1",
+            "cin": "J kg**-1",
+            "tcwv": "kg m**-2"
+          },
+          "n_hours": 17664,
+          "t_min": "2021-05-01 00:00:00",
+          "t_max": "2024-10-31 23:00:00"
+        }
+      },
+      "res_deg": 0.25,
+      "freq": "hourly"
+    }
+  },
+  "IMD_RAINFALL": {
+    "n_files": 6,
+    "size_mb": 152.7,
+    "res_deg": 0.25,
+    "freq": "daily",
+    "units": "mm/day",
+    "domain": "India 6.5-38.5N, 66.5-100E",
+    "per_file": {
+      "RF25_ind2020_rfp25.nc": {
+        "n_days": 366,
+        "t_min": "2020-01-01",
+        "t_max": "2020-12-31",
+        "nan_frac_wb_window": 0.3333,
+        "max_mm_wb_window": 384.1
+      },
+      "RF25_ind2021_rfp25.nc": {
+        "n_days": 365,
+        "t_min": "2021-01-01",
+        "t_max": "2021-12-31",
+        "nan_frac_wb_window": 0.3333,
+        "max_mm_wb_window": 526.7
+      },
+      "RF25_ind2022_rfp25.nc": {
+        "n_days": 365,
+        "t_min": "2022-01-01",
+        "t_max": "2022-12-31",
+        "nan_frac_wb_window": 0.3333,
+        "max_mm_wb_window": 304.8
+      },
+      "RF25_ind2023_rfp25.nc": {
+        "n_days": 365,
+        "t_min": "2023-01-01",
+        "t_max": "2023-12-31",
+        "nan_frac_wb_window": 0.3333,
+        "max_mm_wb_window": 380.4
+      },
+      "RF25_ind2024_rfp25.nc": {
+        "n_days": 366,
+        "t_min": "2024-01-01",
+        "t_max": "2024-12-31",
+        "nan_frac_wb_window": 0.3333,
+        "max_mm_wb_window": 304.1
+      },
+      "RF25_ind2025_rfp25.nc": {
+        "n_days": 365,
+        "t_min": "2025-01-01",
+        "t_max": "2025-12-31",
+        "nan_frac_wb_window": 0.3333,
+        "max_mm_wb_window": 349.0
+      }
+    }
+  },
+  "LIGHTNING": {
+    "file": "india_lightning_Strike.csv",
+    "size_mb": 4.1,
+    "n_strikes": 24546,
+    "n_strikes_wb_domain": 3889,
+    "t_min": "2020-05-01 05:16:30.860203",
+    "t_max": "2020-10-14 12:21:46.872899",
+    "n_dates": 165,
+    "n_dates_wb": 121,
+    "sensor": "ISS-LIS V3.0",
+    "columns": [
+      "flash_id",
+      "utc_time",
+      "date",
+      "time",
+      "year",
+      "month",
+      "day",
+      "hour",
+      "minute",
+      "second",
+      "latitude",
+      "longitude",
+      "radiance",
+      "alert_flag",
+      "source_file"
+    ],
+    "note": "ISS orbital overpass sampling; not a continuous time series"
+  },
+  "DEM": {
+    "n_tiles": 68,
+    "size_mb": 1768.9,
+    "lat_tiles": [
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28
+    ],
+    "lon_tiles": [
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91
+    ],
+    "coverage": "20-29N, 84-92E",
+    "tile_meta": {
+      "crs": "EPSG:4326",
+      "shape": [
+        3601,
+        3601
+      ],
+      "res_deg": [
+        0.0002777777777777778,
+        0.0002777777777777778
+      ],
+      "dtype": "int16",
+      "nodata": -32767.0
+    },
+    "res_m_approx": 30
+  },
+  "CSV_PRODUCTS": {
+    "west_bengal_historical_weather": {
+      "size_mb": 246.3,
+      "n_rows": 2104320,
+      "n_points": 39,
+      "t_min": "2020-01-01 00:00:00",
+      "t_max": "2025-12-31 23:00:00",
+      "freq": "hourly",
+      "lat_range": [
+        21.6872,
+        21.9684
+      ],
+      "lon_range": [
+        87.5,
+        88.9857
+      ],
+      "n_unique_lat": 5,
+      "note": "incomplete grid download: only 5 latitude rows (21.69-21.97N) of a requested WB-wide grid; source is a reanalysis API (ERA5-derived)"
+    },
+    "north_24_parganas_historical_weather": {
+      "size_mb": 3.0,
+      "n_rows": 52608,
+      "t_min": "2020-01-01 00:00:00",
+      "t_max": "2025-12-31 23:00:00",
+      "freq": "hourly",
+      "columns": [
+        "time",
+        "temperature_2m",
+        "relative_humidity_2m",
+        "precipitation",
+        "pressure_msl",
+        "surface_pressure",
+        "cloud_cover",
+        "wind_speed_10m",
+        "wind_direction_10m",
+        "total_column_integrated_water_vapour"
+      ],
+      "note": "single-point time series"
+    },
+    "rainfall_districtwise": {
+      "size_mb": 2.3,
+      "n_rows": 13818,
+      "t_min": "2026-08-19 00:00:00",
+      "t_max": "2026-09-06 00:00:00",
+      "freq": "daily",
+      "n_districts": 728,
+      "states": [
+        "ANDAMAN & NICOBAR",
+        "ANDHRA PRADESH",
+        "ARUNACHAL PRADESH",
+        "ASSAM",
+        "BIHAR",
+        "CHANDIGARH",
+        "CHHATISGARH",
+        "CHHATTISGARH",
+        "DADRA & NAGAR HAVELI",
+        "DAMAN & DIU",
+        "GOA",
+        "GUJARAT",
+        "HARYANA",
+        "HIMACHAL PRADESH",
+        "JAMMU AND KASHMIR",
+        "JHARKHAND",
+        "KARNATAKA",
+        "KERALA",
+        "LADAKH",
+        "LAKSHADWEEP",
+        "MADHYA PRADESH",
+        "MAHARASHTRA",
+        "MANIPUR",
+        "MEGHALAYA",
+        "MIZORAM",
+        "NAGALAND",
+        "NCT of DELHI",
+        "ODISHA",
+        "PUDUCHERRY",
+        "PUNJAB",
+        "RAJASTHAN",
+        "SIKKIM",
+        "TAMIL NADU",
+        "TAMILNADU",
+        "TELANGANA",
+        "TRIPURA",
+        "UTTAR PRADESH",
+        "UTTARAKHAND",
+        "WEST BENGAL"
+      ],
+      "columns": [
+        "State",
+        "District",
+        "Date",
+        "Daily Actual",
+        "Daily Normal",
+        "Daily Departure Per",
+        "Daily Category",
+        "Week Date",
+        "Weekly  Actual",
+        "Weekly Normal",
+        "Weekly Departure Per",
+        "Weekly Category",
+        "Cumulative Date",
+        "Cumulative Actual",
+        "Cumulative Normal",
+        "Cumulative Departue Per",
+        "Cumulative  Category",
+        "Monthly Date",
+        "Monthly Acutual",
+        "Monthly Normal",
+        "Monthly  Departure Per",
+        "Monthly Category"
+      ]
+    }
+  },
+  "RADAR": {
+    "size_mb": 6.4,
+    "members": [
+      "fig4_data.csv",
+      "fig7_data.csv",
+      "fig5_data.csv",
+      "fig8_data.csv",
+      "fig9_data.csv",
+      "fig6_data.csv",
+      "fig3_data.csv"
+    ],
+    "header_groups": {
+      "fig4_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ],
+      "fig7_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ],
+      "fig5_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ],
+      "fig8_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ],
+      "fig9_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ],
+      "fig6_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ],
+      "fig3_data.csv": [
+        "Kolkata",
+        "Chennai",
+        "Machilipatnam",
+        "Karaikal"
+      ]
+    },
+    "note": "publication figure data: GPM vs ground-radar reflectivity calibration for Kolkata/Chennai/Machilipatnam/Karaikal. No timestamps and no gridded reflectivity fields."
+  },
+  "BOUNDARIES": {
+    "IND_ADM2.zip": {
+      "size_mb": 10.3
+    },
+    "north_24_parganas.geojson": {
+      "size_mb": 1.7,
+      "n_features": 1,
+      "properties": [
+        "Name",
+        "Level",
+        "id",
+        "feature_id"
+      ]
+    },
+    "west_bengal.geojson": {
+      "size_mb": 3.1,
+      "n_features": 1,
+      "properties": [
+        "name",
+        "admin_level"
+      ]
+    },
+    "west_bengal_districts.geojson": {
+      "size_mb": 3.2,
+      "n_features": 12,
+      "properties": [
+        "Name",
+        "Level",
+        "id",
+        "feature_id"
+      ]
+    }
+  },
+  "NORMAL_SAMPLES": {
+    "event_exclusion_log.csv": {
+      "n_rows": 5,
+      "columns": [
+        "event",
+        "excluded_start",
+        "excluded_end",
+        "timestamps_removed"
+      ]
+    },
+    "normal_samples.csv": {
+      "n_rows": 768,
+      "columns": [
+        "timestamp",
+        "label_thunderstorm",
+        "label_cloudburst",
+        "label_flash_flood",
+        "sample_type"
+      ],
+      "t_min": "2024-05-01 00:00:00",
+      "t_max": "2024-07-31 23:00:00"
+    },
+    "_note": "pre-existing partial labelling attempt by the project author; not used - labels are regenerated from scratch by this pipeline"
+  }
+}
