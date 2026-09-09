@@ -51,10 +51,6 @@
       <span class="absolute -top-1 -right-1 size-3 rounded-full bg-red-500 border-2 border-[#0B0F19]"></span>
     </div>
     <div class="flex flex-col min-w-0">
-      <button id="btn-refresh-live" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/50 shadow-sm text-xs font-bold font-mono text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" onclick="window.forceLiveRefresh()">
-    <span class="material-symbols-outlined text-[14px]">refresh</span>
-    <span>REFRESH LIVE DATA</span>
-  </button>
   <div class="flex items-center gap-2">
         <h1 class="text-white text-base font-extrabold tracking-tight font-sans">StormSense</h1>
         <span class="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-[9px] font-bold tracking-wider uppercase font-mono shadow-sm shadow-cyan-500/20">CALIBRATED ML</span>
@@ -219,8 +215,12 @@
     OFFLINE / LOCAL CACHE
   </span>
 </div>
-<!-- Right IMD 4-Stage Severity Legend<!-- Right IMD 4-Stage Severity Legend & Quick Actions -->
+<!-- Right IMD 4-Stage Severity Legend & Quick Actions -->
 <div class="flex items-center gap-3 overflow-x-auto">
+      <button id="btn-refresh-live" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/50 shadow-sm text-xs font-bold font-mono text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" onclick="window.forceLiveRefresh()">
+    <span class="material-symbols-outlined text-[14px]">refresh</span>
+    <span>REFRESH LIVE DATA</span>
+  </button>
   <!-- Prominent Mode Switch Button -->
   <button class="btn-mode-switch flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold transition-all shadow-md shadow-cyan-600/25 cursor-pointer border border-cyan-400/40" id="btn-mode-toggle" onclick="window.toggleOperationalMode()">
     <span class="material-symbols-outlined text-sm" id="btn-mode-icon">history_edu</span>
@@ -317,7 +317,7 @@
 <span id="kpi-ts-level" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">OPERATIONAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
-<span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-ts-value">—</span>
+<span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-ts-value">...</span>
 <span class="inline-flex items-center gap-1 text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full" id="kpi-ts-trend">LIVE</span>
 </div>
 </div>
@@ -348,7 +348,7 @@
 <span id="kpi-rain-level" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">OPERATIONAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
-<span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-rain-value">—</span>
+<span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-rain-value">...</span>
 <span class="inline-flex items-center gap-1 text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded-full" id="kpi-rain-trend">LIVE</span>
 </div>
 </div>
@@ -379,7 +379,7 @@
 <span id="kpi-flood-level" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">OPERATIONAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
-<span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-flood-value">—</span>
+<span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-flood-value">...</span>
 <span class="inline-flex items-center gap-1 text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full" id="kpi-flood-trend">LIVE</span>
 </div>
 </div>
@@ -410,7 +410,7 @@
 <span id="kpi-overall-level" class="px-2.5 py-1 rounded-lg bg-amber-600 text-slate-950 text-[11px] font-extrabold font-mono uppercase tracking-wider">OPERATIONAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
-<span class="text-4xl font-black text-white tracking-tight font-mono" id="kpi-overall-value">—</span>
+<span class="text-4xl font-black text-white tracking-tight font-mono" id="kpi-overall-value">...</span>
 <span id="kpi-overall-action" class="px-2 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-100 text-xs font-extrabold uppercase font-mono tracking-wide">MONITOR RADAR</span>
 </div>
 </div>
@@ -510,7 +510,7 @@
 <!-- Interactive User GPS Marker -->
 <div class="absolute hidden flex-col items-center cursor-pointer z-[500] transition-all duration-700 select-none" id="user-location-marker" onclick="window.toggleUserPinpointCard()" style="top: 46%; left: 47%; transform: translate(-50%, -50%);"><div class="relative flex items-center justify-center size-10"><span class="size-9 rounded-full bg-cyan-500/25 ring-2 ring-cyan-400/80 animate-ping absolute"></span><span class="size-6 rounded-full bg-cyan-500/40 absolute"></span><div class="size-4 rounded-full bg-cyan-400 border-2 border-white shadow-lg flex items-center justify-center"><div class="size-1.5 rounded-full bg-slate-950"></div></div></div><div class="mt-1 bg-slate-950/95 border border-cyan-400/70 px-2 py-1 rounded-lg shadow-2xl text-center backdrop-blur-md"><div class="flex items-center gap-1.5 justify-center"><span class="size-1.5 rounded-full bg-cyan-400 animate-pulse"></span><span class="text-[10px] font-bold text-white tracking-wide">Monitored Station</span></div><span class="text-[9px] text-cyan-300 font-mono block" id="user-marker-coords">22.72°N, 88.48°E</span></div></div>
 <!-- User Pinpoint Context Card -->
-<div class="absolute top-4 left-4 z-[500] max-w-[270px] bg-slate-950/95 border border-cyan-500/70 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl hidden flex-col gap-2.5 transition-all pointer-events-auto" id="user-pinpoint-card"><div class="flex items-center justify-between border-b border-slate-800 pb-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-cyan-400 text-base">pin_drop</span><div><h5 class="text-xs font-bold text-white leading-tight">Station Hazard Profile</h5><span class="text-[10px] text-slate-400 font-mono" id="user-pinpoint-name">North 24 Parganas</span></div></div><button class="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer" onclick="window.toggleUserPinpointCard()"><span class="material-symbols-outlined text-sm">close</span></button></div><div class="grid grid-cols-2 gap-2 text-[10px] font-mono"><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">TARGET DISTRICT</span><span class="text-white font-bold text-xs" id="pinpoint-target-name">N 24 Parganas</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RESOLUTION</span><span class="text-cyan-400 font-bold text-xs">0.25° Grid</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">SEVERE RISK</span><span class="text-red-400 font-bold text-xs" id="pinpoint-severe-risk">—</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RAIN FORECAST</span><span class="text-amber-400 font-bold text-xs" id="pinpoint-rain-forecast">—</span></div></div><div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80"><button class="w-full py-1.5 px-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[10px] font-bold font-mono transition-colors flex items-center justify-center gap-1 cursor-pointer" onclick="window.recenterOnUser()"><span class="material-symbols-outlined text-xs">center_focus_strong</span> Recenter Reticle Pin</button></div></div>
+<div class="absolute top-4 left-4 z-[500] max-w-[270px] bg-slate-950/95 border border-cyan-500/70 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl hidden flex-col gap-2.5 transition-all pointer-events-auto" id="user-pinpoint-card"><div class="flex items-center justify-between border-b border-slate-800 pb-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-cyan-400 text-base">pin_drop</span><div><h5 class="text-xs font-bold text-white leading-tight">Station Hazard Profile</h5><span class="text-[10px] text-slate-400 font-mono" id="user-pinpoint-name">North 24 Parganas</span></div></div><button class="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer" onclick="window.toggleUserPinpointCard()"><span class="material-symbols-outlined text-sm">close</span></button></div><div class="grid grid-cols-2 gap-2 text-[10px] font-mono"><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">TARGET DISTRICT</span><span class="text-white font-bold text-xs" id="pinpoint-target-name">N 24 Parganas</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RESOLUTION</span><span class="text-cyan-400 font-bold text-xs">0.25° Grid</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">SEVERE RISK</span><span class="text-red-400 font-bold text-xs" id="pinpoint-severe-risk">...</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RAIN FORECAST</span><span class="text-amber-400 font-bold text-xs" id="pinpoint-rain-forecast">...</span></div></div><div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80"><button class="w-full py-1.5 px-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[10px] font-bold font-mono transition-colors flex items-center justify-center gap-1 cursor-pointer" onclick="window.recenterOnUser()"><span class="material-symbols-outlined text-xs">center_focus_strong</span> Recenter Reticle Pin</button></div></div>
 </div>
 <!-- Model Status Footer -->
 <div class="px-5 py-3 bg-slate-950/80 border-t border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs">
@@ -558,10 +558,11 @@
 <h3 class="text-xl font-extrabold text-white mt-0.5" id="profile-district">West Bengal</h3>
 <div class="mt-2">
 <span class="text-[11px] font-bold font-mono text-slate-400 uppercase tracking-wider">Active High-Risk Area</span>
-<div class="text-sm font-bold text-emerald-300" id="active-high-risk-area">—</div>
+<div class="text-sm font-bold text-emerald-300" id="active-high-risk-area">...</div>
 </div>
 <p class="text-xs text-slate-400 mt-2" id="profile-meta">State-wide severe weather monitoring</p>
-<div class="mt-1" id="data-freshness"></div>`n<div class="text-xs text-slate-500 mt-1">Last Updated: <span id="last-updated-time">--:--</span></div>
+<div class="mt-1" id="data-freshness"></div>
+<div class="text-xs text-slate-500 mt-1">Last Updated: <span id="last-updated-time">--:--</span></div>
 </div>
 <span id="profile-level" class="px-3 py-1.5 rounded-xl bg-amber-600 text-slate-950 text-xs font-black font-mono uppercase tracking-wider flex items-center gap-1.5">
 <span class="size-2 bg-white rounded-full"></span> OPERATIONAL
@@ -572,7 +573,7 @@
 <div>
 <div class="flex justify-between items-center text-xs mb-1.5">
 <span class="text-slate-300 font-semibold">Thunderstorm</span>
-<span class="text-amber-400 font-mono font-bold" id="meter-ts-label">—</span>
+<span class="text-amber-400 font-mono font-bold" id="meter-ts-label">...</span>
 </div>
 <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
 <div id="meter-ts-bar" class="bg-amber-500 h-full rounded-full" style="width:0%"></div>
@@ -581,7 +582,7 @@
 <div>
 <div class="flex justify-between items-center text-xs mb-1.5">
 <span class="text-slate-300 font-semibold">Heavy rainfall</span>
-<span class="text-amber-400 font-mono font-bold" id="meter-rain-label">—</span>
+<span class="text-amber-400 font-mono font-bold" id="meter-rain-label">...</span>
 </div>
 <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
 <div id="meter-rain-bar" class="bg-orange-500 h-full rounded-full" style="width:0%"></div>
@@ -590,7 +591,7 @@
 <div>
 <div class="flex justify-between items-center text-xs mb-1.5">
 <span class="text-slate-300 font-semibold">Flash-Flood Risk Proxy</span>
-<span class="text-amber-400 font-mono font-bold" id="meter-flood-label">—</span>
+<span class="text-amber-400 font-mono font-bold" id="meter-flood-label">...</span>
 </div>
 <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
 <div id="meter-flood-bar" class="bg-orange-500 h-full rounded-full" style="width:0%"></div>
@@ -601,22 +602,22 @@
 <div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 grid grid-cols-2 gap-4">
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Temperature </span>
-<span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-temp">—</span>
+<span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-temp">...</span>
 <span class="text-[10px] text-slate-400 font-medium" id="bind-temp-source">Surface observation</span>
 </div>
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Rainfall </span>
-<span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-rain">—</span>
+<span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-rain">...</span>
 <span class="text-[10px] text-slate-400 font-medium" id="bind-rain-source">Surface observation</span>
 </div>
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Humidity </span>
-<span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-humidity">—</span>
+<span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-humidity">...</span>
 <span class="text-[10px] text-slate-400 font-medium" id="bind-humidity-source">Surface observation</span>
 </div>
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Wind </span>
-<span class="text-white text-lg font-extrabold font-mono mt-0.5 block" id="bind-wind">—</span>
+<span class="text-white text-lg font-extrabold font-mono mt-0.5 block" id="bind-wind">...</span>
 <span class="text-[10px] text-slate-400 font-medium" id="bind-wind-source">Surface observation</span>
 </div>
 </div>
@@ -1041,7 +1042,7 @@
 </div>
 <div class="text-[10px] font-mono text-slate-500 flex justify-between">
   <span>Source: 0.25° atmospheric analysis</span>
-  <span id="thermo-analysis-timestamp">—</span>
+  <span id="thermo-analysis-timestamp">...</span>
 </div>
 </div>
 </div>
