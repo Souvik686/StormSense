@@ -1,7 +1,7 @@
 <!DOCTYPE html><html class="dark" lang="en" style=""><head>
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
-<title>StormSense | SevereWeatherNet AI Nowcasting</title>
+<title>StormSense | AI Severe Weather Early Warning</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="css/styles.css" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -51,7 +51,11 @@
       <span class="absolute -top-1 -right-1 size-3 rounded-full bg-red-500 border-2 border-[#0B0F19]"></span>
     </div>
     <div class="flex flex-col min-w-0">
-      <div class="flex items-center gap-2">
+      <button id="btn-refresh-live" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 border border-cyan-400/50 shadow-sm text-xs font-bold font-mono text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" onclick="window.forceLiveRefresh()">
+    <span class="material-symbols-outlined text-[14px]">refresh</span>
+    <span>REFRESH LIVE DATA</span>
+  </button>
+  <div class="flex items-center gap-2">
         <h1 class="text-white text-base font-extrabold tracking-tight font-sans">StormSense</h1>
         <span class="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-[9px] font-bold tracking-wider uppercase font-mono shadow-sm shadow-cyan-500/20">CALIBRATED ML</span>
       </div>
@@ -83,7 +87,7 @@
       North 24 Parganas Convective Watch
     </div>
     <p class="text-[11px] text-slate-300 leading-relaxed mb-3.5 font-normal relative z-10" id="bind-sidebar-alert-body">
-      SevereWeatherNet V2 spatiotemporal nowcast active for North 24 Parganas.
+      AI severe weather forecast active for West Bengal.
     </p>
     <button class="btn-siren-trigger w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-bold shadow-lg shadow-red-600/30 hover:shadow-red-600/50 transition-all active:scale-[0.98] cursor-pointer border border-red-500/40 relative z-10 group" id="btn-dispatch-siren-side">
       <span class="material-symbols-outlined text-sm group-hover:animate-pulse">emergency_share</span>
@@ -175,7 +179,7 @@
     </span>
   </div>
   <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono px-1">
-    <span id="bind-version">SevereWeatherNet V2</span>
+    <span id="bind-version">AI Forecast Model</span>
     <span class="text-slate-400" id="bind-desk">0.25° Spatiotemporal</span>
   </div>
 </div></aside>
@@ -254,7 +258,7 @@
 </div>
 </header>
 <div class="operational-banner px-6 lg:px-8 flex items-center justify-between text-xs">
-  <span id="bind-disclaimer">SevereWeatherNet V2 Calibrated ML Nowcasting Platform · Grid: 0.25° (~28 km)</span>
+  <span id="bind-disclaimer">AI Severe Weather Early Warning Platform · Grid: 0.25° (~28 km)</span>
   <span>Monitored District: <strong id="bind-district-name" class="text-cyan-300">North 24 Parganas</strong></span>
 </div>
 <!-- Scrollable Workspace -->
@@ -270,7 +274,7 @@
   <span id="desk-mode-label">LIVE MONITORING</span>
 </span>
 </div>
-<p class="text-sm text-slate-400" id="desk-subtitle">Ambient surface telemetry (t=0) from OpenWeather station feed. Polled every 60s. SevereWeatherNet V2 ML nowcasting inputs are tracked below.</p>
+<p class="text-sm text-slate-400" id="desk-subtitle">Current surface conditions and AI forecast risk. Updated every 5 minutes.</p>
 </div>
 <div class="flex items-center gap-3 flex-wrap">
 <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono" id="live-refresh-container">
@@ -285,10 +289,13 @@
 </div>
 <div class="relative flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
 <span class="material-symbols-outlined text-sm text-slate-400">location_on</span>
-<span class="text-xs text-slate-300 font-semibold">Active Sector:</span>
-<select class="text-xs text-white font-bold bg-slate-800 px-2 py-0.5 rounded border border-slate-700 focus:outline-none focus:border-red-500 cursor-pointer" id="sector-selector">
-<option selected="" value="Nadia / Bhagirathi Valley">Nadia / Bhagirathi Valley (Red Warning)</option>
-<option value="Murshidabad (North/South)">Murshidabad (North/South)</option>
+<span class="text-xs text-slate-300 font-semibold">Jump to area:</span>
+<select class="text-xs text-white font-bold bg-slate-800 px-2 py-0.5 rounded border border-slate-700 focus:outline-none focus:border-red-500 cursor-pointer" id="sector-selector" title="Moves the map view only. The monitored region is all of West Bengal.">
+<option selected="" value="Whole State">Whole State</option>
+<option value="Darjeeling / Kalimpong">Darjeeling / Kalimpong</option>
+<option value="Jalpaiguri / Alipurduar">Jalpaiguri / Alipurduar</option>
+<option value="Malda / Murshidabad">Malda / Murshidabad</option>
+<option value="Purulia / Bankura">Purulia / Bankura</option>
 <option value="Purba Bardhaman &amp; Damodar">Purba Bardhaman &amp; Damodar Basin</option>
 <option value="North 24 Parganas Delta">North 24 Parganas Coastal Delta</option>
 <option value="Kolkata Metropolitan Area">Kolkata Metropolitan Area</option>
@@ -423,7 +430,7 @@
   <div class="flex items-center justify-between mb-3">
     <h3 class="text-sm font-bold text-white">0-6 hour forecast inputs</h3>
     <span class="text-[10px] font-mono text-emerald-400">
-      LIVE · OpenWeather
+      LIVE OBSERVATION
     </span>
   </div>
 
@@ -480,7 +487,7 @@
 <span class="px-2 py-0.5 bg-orange-500 text-white rounded">50–75% Alert</span>
 <span class="px-2 py-0.5 bg-red-500 text-white rounded">≥75% Warning</span>
 </div>
-<div class="text-[9px] text-slate-500 font-mono mt-1" id="map-legend-subtext">Model Risk Probability (Not official IMD warnings)</div>
+<div class="text-[9px] text-slate-500 font-mono mt-1" id="map-legend-subtext">AI-derived Model Risk Probability (Not an official government warning)</div>
 </div>
 <!-- Floating Map Tools -->
 <div class="absolute top-4 right-4 flex flex-col gap-2 z-[500] pointer-events-auto">
@@ -532,7 +539,7 @@
 </div>
 <div>
 <h3 class="font-bold text-white text-base">Active Meteorological Bulletins</h3>
-<p class="text-xs text-slate-400 font-mono">District Advisories — Aggregated from 0.25° SevereWeatherNet Grid</p>
+<p class="text-xs text-slate-400 font-mono">District Advisories — Aggregated across the forecast grid</p>
 </div>
 </div>
 <span class="text-xs text-cyan-400 font-mono bg-slate-800/60 px-2.5 py-1 rounded-lg border border-cyan-500/30">ADVISORY</span>
@@ -547,9 +554,14 @@
 <div class="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-xl backdrop-blur-xl flex flex-col gap-5" id="district-profile-card">
 <div class="flex items-start justify-between border-b border-slate-800 pb-4">
 <div>
-<span class="text-[11px] font-bold font-mono text-slate-400 uppercase tracking-wider">Target Monitored Region</span>
-<h3 class="text-xl font-extrabold text-white mt-0.5" id="profile-district">North 24 Parganas, West Bengal</h3>
-<p class="text-xs text-slate-400 mt-1" id="profile-meta">Latitude 22.72° N, Longitude 88.48° E · SevereWeatherNet V2 Profile</p>
+<span class="text-[11px] font-bold font-mono text-slate-400 uppercase tracking-wider">Target Region</span>
+<h3 class="text-xl font-extrabold text-white mt-0.5" id="profile-district">West Bengal</h3>
+<div class="mt-2">
+<span class="text-[11px] font-bold font-mono text-slate-400 uppercase tracking-wider">Active High-Risk Area</span>
+<div class="text-sm font-bold text-emerald-300" id="active-high-risk-area">—</div>
+</div>
+<p class="text-xs text-slate-400 mt-2" id="profile-meta">State-wide severe weather monitoring</p>
+<div class="mt-1" id="data-freshness"></div>`n<div class="text-xs text-slate-500 mt-1">Last Updated: <span id="last-updated-time">--:--</span></div>
 </div>
 <span id="profile-level" class="px-3 py-1.5 rounded-xl bg-amber-600 text-slate-950 text-xs font-black font-mono uppercase tracking-wider flex items-center gap-1.5">
 <span class="size-2 bg-white rounded-full"></span> OPERATIONAL
@@ -590,22 +602,22 @@
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Temperature </span>
 <span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-temp">—</span>
-<span class="text-[10px] text-slate-400 font-medium" id="bind-temp-source">Live observation · OpenWeather</span>
+<span class="text-[10px] text-slate-400 font-medium" id="bind-temp-source">Surface observation</span>
 </div>
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Rainfall </span>
 <span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-rain">—</span>
-<span class="text-[10px] text-slate-400 font-medium" id="bind-rain-source">Live observation · OpenWeather</span>
+<span class="text-[10px] text-slate-400 font-medium" id="bind-rain-source">Surface observation</span>
 </div>
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Humidity </span>
 <span class="text-white text-xl font-extrabold font-mono mt-0.5 block" id="bind-humidity">—</span>
-<span class="text-[10px] text-slate-400 font-medium" id="bind-humidity-source">Live observation · OpenWeather</span>
+<span class="text-[10px] text-slate-400 font-medium" id="bind-humidity-source">Surface observation</span>
 </div>
 <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/60">
 <span class="text-slate-400 block text-[10px] uppercase font-bold font-mono tracking-wider">Wind </span>
 <span class="text-white text-lg font-extrabold font-mono mt-0.5 block" id="bind-wind">—</span>
-<span class="text-[10px] text-slate-400 font-medium" id="bind-wind-source">Live observation · OpenWeather</span>
+<span class="text-[10px] text-slate-400 font-medium" id="bind-wind-source">Surface observation</span>
 </div>
 </div>
 </div>
@@ -618,7 +630,7 @@
 </div>
 <div>
 <h3 class="text-base font-bold text-white">Explainable AI (XAI) Factor Attribution</h3>
-<p class="text-xs text-slate-400 font-mono">Atmospheric modality attribution from SevereWeatherNet V2</p>
+<p class="text-xs text-slate-400 font-mono">Atmospheric factor attribution from the forecast model</p>
 </div>
 </div>
 </div>
@@ -627,7 +639,7 @@
 <!-- XAI Bottom SOP Trigger -->
 <div class="pt-3 border-t border-slate-800 flex items-center justify-between gap-3">
 <div class="text-xs text-slate-300 font-mono">
-                Source: <strong class="text-cyan-400" id="xai-source">SevereWeatherNet V2 Calibrated (Held-Out 2024 CSI 0.3068)</strong>
+                Source: <strong class="text-cyan-400" id="xai-source">AI Forecast Model (validated on held-out 2024 season)</strong>
 </div>
 <button class="btn-siren-trigger px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5">
 <span class="material-symbols-outlined text-sm">send</span>
@@ -649,7 +661,7 @@
 <h2 class="text-white text-2xl lg:text-3xl font-extrabold tracking-tight">Spatial Nowcasting &amp; Satellite Data Desk</h2>
 <span class="px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-bold uppercase tracking-wider font-mono">CALIBRATED ML</span>
 </div>
-<p class="text-sm text-slate-400">0.25° SevereWeatherNet V2 Spatiotemporal Nowcasting Grid + INSAT-3DR Geostationary Meteorological Archive</p>
+<p class="text-sm text-slate-400">0.25° AI forecast grid + INSAT-3DR Geostationary Meteorological Archive</p>
 </div>
 <div class="flex items-center gap-3 flex-wrap">
 <span class="text-xs font-mono text-slate-300 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl flex items-center gap-2">
@@ -662,14 +674,17 @@
 </div>
 <!-- Dual Screen Grid -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-<!-- Screen 1: SevereWeatherNet Spatial Nowcast -->
+<!-- Screen 1: AI Spatial Forecast -->
 <div class="rounded-2xl border border-slate-800/80 bg-slate-900/60 overflow-hidden shadow-2xl backdrop-blur-xl flex flex-col">
 <div class="p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
 <div class="flex items-center gap-2">
 <span class="material-symbols-outlined text-red-400">radar</span>
-<span class="font-bold text-sm text-white">SevereWeatherNet V2 Spatial Nowcast</span>
+<span class="font-bold text-sm text-white">AI Spatial Forecast &amp; Live Radar</span>
 </div>
+<div class="flex gap-2">
+<span id="radar-status" class="text-[10px] font-mono bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/40 font-bold">RADAR LOADING</span>
 <span id="desk-peak-prob-badge" class="text-[10px] font-mono bg-red-500/20 text-red-400 px-2 py-0.5 rounded border border-red-500/40 font-bold">PEAK PROB: 88.4%</span>
+</div>
 </div>
 <div id="radar-map-container" class="relative h-[420px] w-full bg-[#070b12] overflow-hidden" data-location="North 24 Parganas, West Bengal, India"></div>
 <div class="p-3 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono">
@@ -715,7 +730,7 @@
 </div>
 </div>
 <div class="p-3 rounded-xl bg-slate-950/90 border border-slate-800 text-[11px] font-sans text-slate-400">
-  <strong class="text-amber-400 font-mono">Scientific Rigor Notice:</strong> Operational nowcasts are generated by SevereWeatherNet V2 from ERA5 spatiotemporal cubes and SRTM DEM. INSAT data is episodic (93h overlap with training data); no fabricated live satellite latency is simulated.
+  <strong class="text-amber-400 font-mono">Scientific Rigor Notice:</strong> Forecasts are generated by the AI model from gridded atmospheric analysis and terrain elevation. INSAT data is episodic (93h overlap with training data); no fabricated live satellite latency is simulated.
 </div>
 </div>
 <div class="p-3 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono">
@@ -730,7 +745,7 @@
 <div>
 <h3 class="text-base font-bold text-white flex items-center gap-2">
 <span class="material-symbols-outlined text-cyan-400">track_changes</span>
-      Predicted High-Risk ML Grid Cells (SevereWeatherNet V2)
+      Predicted High-Risk Grid Cells
 </h3>
 <p class="text-xs text-slate-400 mt-0.5 font-mono">Connected 0.25° grid cells exceeding calibrated decision threshold for selected horizon</p>
 </div>
@@ -778,8 +793,8 @@
 </div>
 <p class="text-sm text-slate-400">Rigorous empirical comparison on held-out 2024 convective season (May–Oct 2024, 4,322 hourly samples, 3,565,650 grid evaluations).</p>
 <div class="flex items-center gap-2 mt-2 flex-wrap">
-<span class="px-2 py-0.5 rounded bg-slate-900 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">SevereWeatherNet V2 (Calibrated)</span>
-<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-400">SevereWeatherNet V1 Baseline</span>
+<span class="px-2 py-0.5 rounded bg-slate-900 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">AI Forecast Model</span>
+<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-400">Earlier Model Baseline</span>
 <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-400">Persistence Baseline</span>
 <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[10px] font-mono text-cyan-400">Evaluation: 0.25° Grid Across West Bengal</span>
 </div>
@@ -821,13 +836,13 @@
 <span class="text-xs font-mono text-slate-400" id="benchmark-lead-badge">Lead Time: +2 Hours</span>
 </div>
 <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-<!-- Card 1: SevereWeatherNet V2 Calibrated (Winner) -->
+<!-- Card 1: AI Forecast Model (selected) -->
 <div class="rounded-2xl border-2 border-emerald-500/60 bg-slate-900/90 overflow-hidden flex flex-col shadow-2xl relative group">
 <div class="p-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between">
 <div>
 <div class="flex items-center gap-2">
 <span class="size-2 rounded-full bg-emerald-400 animate-pulse"></span>
-<h4 class="font-bold text-sm text-white">SevereWeatherNet V2 (Calibrated)</h4>
+<h4 class="font-bold text-sm text-white">AI Forecast Model</h4>
 </div>
 <span class="text-[10px] text-emerald-400 font-mono">Tri-Stream ConvGRU + Temperature Scaling</span>
 </div>
@@ -872,11 +887,11 @@
 <span class="text-emerald-400 font-bold">Beats Persistence</span>
 </div>
 </div>
-<!-- Card 2: SevereWeatherNet V1 Baseline -->
+<!-- Card 2: Earlier Model Baseline -->
 <div class="rounded-2xl border border-slate-800 bg-slate-900/80 overflow-hidden flex flex-col shadow-xl">
 <div class="p-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between">
 <div>
-<h4 class="font-bold text-sm text-slate-300">SevereWeatherNet V1 Baseline</h4>
+<h4 class="font-bold text-sm text-slate-300">Earlier Model Baseline</h4>
 <span class="text-[10px] text-slate-400 font-mono">Single ConvGRU (130k params)</span>
 </div>
 <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">BASELINE</span>
@@ -1022,10 +1037,10 @@
 </div>
 </div>
 <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-sans leading-relaxed">
-<strong class="text-red-400 font-mono">Operational Diagnostic:</strong> <span id="thermo-diagnostic">Evaluating ERA5 thermodynamic state for monitored domain centroid...</span>
+<strong class="text-red-400 font-mono">Operational Diagnostic:</strong> <span id="thermo-diagnostic">Evaluating thermodynamic state for the monitored domain centroid...</span>
 </div>
 <div class="text-[10px] font-mono text-slate-500 flex justify-between">
-  <span>Source: ERA5 0.25° Diagnostic Slice</span>
+  <span>Source: 0.25° atmospheric analysis</span>
   <span id="thermo-analysis-timestamp">—</span>
 </div>
 </div>
@@ -1136,7 +1151,7 @@
 <h2 class="text-white text-2xl lg:text-3xl font-extrabold tracking-tight">Explainable AI (XAI) Atmospheric Attribution Lab</h2>
 <span class="px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-bold uppercase tracking-wider font-mono">PHYSICAL ATTRIBUTION</span>
 </div>
-<p class="text-sm text-slate-400">Physical diagnostic and feature attribution for SevereWeatherNet V2 nowcasting engine across monitored domain.</p>
+<p class="text-sm text-slate-400">Physical diagnostic and feature attribution for AI Forecast Model nowcasting engine across monitored domain.</p>
 </div>
 </div>
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1170,7 +1185,7 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 <h2 class="text-white text-2xl lg:text-3xl font-extrabold tracking-tight">GIS Spatial Layers &amp; Domain Manager</h2>
 <span class="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider font-mono">VECTOR + RASTER</span>
 </div>
-<p class="text-sm text-slate-400">SevereWeatherNet geospatial domains: West Bengal administrative boundaries, 0.25&deg; prediction grid, SRTM elevation, and surface observation coordinates.</p>
+<p class="text-sm text-slate-400">Forecast geospatial domains: West Bengal administrative boundaries, 0.25&deg; prediction grid, SRTM elevation, and surface observation coordinates.</p>
 </div>
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -1273,7 +1288,7 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 <h2 class="text-white text-2xl lg:text-3xl font-extrabold tracking-tight">Atmospheric Data Streams &amp; Ingestion Pipeline</h2>
 <span class="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider font-mono">INGESTION ACTIVE</span>
 </div>
-<p class="text-sm text-slate-400">Ingested meteorological datasets powering SevereWeatherNet V2 multi-modal spatio-temporal nowcasting.</p>
+<p class="text-sm text-slate-400">Meteorological inputs powering the AI forecast.</p>
 </div>
 </div>
 <!-- Data Pipeline Health & Ingestion Status -->
@@ -1295,18 +1310,18 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
             <span class="size-1.5 rounded-full bg-emerald-400 animate-pulse"></span>ONLINE
           </span>
         </div>
-        <p class="text-[11px] text-slate-400 font-sans mb-2">OpenWeather Station Feed (North 24 Parganas)</p>
+        <p class="text-[11px] text-slate-400 font-sans mb-2">Surface Observation Feed</p>
       </div>
       <div class="text-[10px] text-slate-500 pt-2 border-t border-slate-800/80" id="health-surface-detail">Poll Interval: 60s</div>
     </div>
-    <!-- Component 2: ERA5 -->
+    <!-- Component 2: gridded analysis -->
     <div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between font-mono text-xs">
       <div>
         <div class="flex items-center justify-between mb-1.5">
-          <span class="font-bold text-white">ERA5 Modality</span>
+          <span class="font-bold text-white">Gridded Atmospheric Analysis</span>
           <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">OFFLINE (~5d)</span>
         </div>
-        <p class="text-[11px] text-slate-400 font-sans mb-2">ECMWF Reanalysis (Available in Historical Mode)</p>
+        <p class="text-[11px] text-slate-400 font-sans mb-2">Historical reanalysis (Historical mode)</p>
       </div>
       <div class="text-[10px] text-slate-500 pt-2 border-t border-slate-800/80">Historical Mode Only</div>
     </div>
@@ -1328,7 +1343,7 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
           <span class="font-bold text-white">Model Engine</span>
           <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">LOADED</span>
         </div>
-        <p class="text-[11px] text-slate-400 font-sans mb-2">SevereWeatherNet V2 Calibrated (781K params)</p>
+        <p class="text-[11px] text-slate-400 font-sans mb-2">AI Forecast Model</p>
       </div>
       <div class="text-[10px] text-slate-500 pt-2 border-t border-slate-800/80">v2_calibrated_best.pt</div>
     </div>
@@ -1348,8 +1363,8 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 
 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 font-mono text-xs">
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
-<span class="text-slate-400 block">ERA5 REANALYSIS 0.25&deg;</span>
-<span class="text-emerald-400 text-base font-bold">ECMWF Atmospheric</span>
+<span class="text-slate-400 block">GRIDDED ANALYSIS 0.25&deg;</span>
+<span class="text-emerald-400 text-base font-bold">Atmospheric</span>
 <span class="text-[10px] text-slate-500 block mt-1">CAPE, CIN, TCWV, Winds, Upper Levels</span>
 </div>
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
@@ -1359,7 +1374,7 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 </div>
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
 <span class="text-slate-400 block">SURFACE TELEMETRY</span>
-<span class="text-white text-base font-bold">OpenWeather API</span>
+<span class="text-white text-base font-bold">Surface observation provider</span>
 <span class="text-[10px] text-slate-500 block mt-1">Station 22.72&deg;N, 88.48&deg;E (North 24 Parganas)</span>
 </div>
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
@@ -1382,12 +1397,12 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 </button>
 </div>
 <div class="p-3.5 rounded-xl bg-red-500/10 border border-red-500/40 text-xs text-red-200 leading-relaxed">
-<strong>SIMULATION DIRECTIVE:</strong> You are authorizing the dispatch of a simulated Severe Convective Weather Warning Advisory across West Bengal disaster management channels based on SevereWeatherNet V2 nowcast outputs.
+<strong>SIMULATION DIRECTIVE:</strong> You are authorizing the dispatch of a simulated Severe Convective Weather Warning Advisory across West Bengal disaster management channels based on AI forecast outputs.
 </div>
 <div class="flex flex-col gap-2 text-xs font-mono bg-slate-950 p-3 rounded-xl border border-slate-800 text-slate-300">
 <div>PROTOCOL: <span class="text-red-400 font-bold">STAGE-4 ADVISORY SIMULATION</span></div>
 <div>CHANNELS: <span class="text-white">CAP XML Broadcast + Emergency SMS Gateway (Simulated)</span></div>
-<div>AUTHORITY: <span class="text-white">SevereWeatherNet V2 Autonomous Risk Engine</span></div>
+<div>AUTHORITY: <span class="text-white">Autonomous Risk Engine</span></div>
 </div>
 <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
 <button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeSirenModal()">
@@ -1408,13 +1423,13 @@ Cancel
 <!-- Mission Control System Footer -->
 <footer class="border-t border-slate-800/80 px-6 lg:px-8 py-5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 mt-auto bg-[#0A0E17]">
 <div class="flex items-center gap-2">
-<span class="font-semibold text-slate-300">SevereWeatherNet V2 / StormSense</span>
+<span class="font-semibold text-slate-300">StormSense</span>
 <span>&middot;</span>
 <span>AI-Driven Hyper-Local Severe Weather Nowcasting</span>
 </div>
 <div class="flex items-center gap-6 font-mono">
 <span class="flex items-center gap-1.5 text-emerald-400">
-<span class="size-2 rounded-full bg-emerald-400"></span> SevereWeatherNet V2 Active &middot; ERA5 + DEM Modality
+<span class="size-2 rounded-full bg-emerald-400"></span> AI Forecast Active
 </span>
 <a class="hover:text-slate-200 transition-colors" href="#">Standard Operating Procedures</a>
 <a class="text-red-400 font-bold hover:underline" href="#">Emergency Hotline: 1070</a>
@@ -1450,3 +1465,4 @@ Cancel
 <script src="js/app.js"></script>
 
 </body></html>
+
