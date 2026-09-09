@@ -9,6 +9,7 @@ Integrates:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -74,6 +75,23 @@ if os.path.isdir(weather_app_dir):
     static_dir = os.path.join(weather_app_dir, "static")
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+def _live_unavailable_payload(
+    svc: "NowcastService", error: Exception, **extra
+) -> dict:
+    """Uniform 'live pipeline not ready' response carrying the REAL reason the
+    operational input could not be ingested, rather than a generic message.
+    Only reached when live inference has genuinely never succeeded -- once a
+    prediction exists it is served (flagged stale if old) instead of this."""
+    payload = {
+        "status": "unavailable",
+        "mode": "live",
+        "message": str(error),
+        "live_status": svc.get_live_status(),
+    }
+    payload.update(extra)
+    return payload
 
 
 # ── Dependency: ML Nowcast Service ───────────────────────────────────────────
@@ -222,21 +240,15 @@ async def nowcast_summary(
     svc: NowcastService = Depends(_get_service),
 ):
     """Retrieve calibrated multi-hazard prediction summary and timeline."""
-    if mode == "live":
-        return {
-            "status": "unavailable",
-            "mode": "live",
-            "message": "SevereWeatherNet ML Nowcast is unavailable in live mode (ERA5 atmospheric reanalysis has ~5-day latency). Use Historical Case Study mode (/?mode=historical).",
-            "live_surface_obs_endpoint": "/api/live/surface",
-            "lead_hours": lead,
-            "district": district,
-        }
     if lead not in SUPPORTED_LEADS:
         raise HTTPException(
             status_code=422,
             detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
         )
-    return svc.get_summary(lead_hours=lead, district=district)
+    try:
+        return svc.get_summary(lead_hours=lead, district=district, mode=mode)
+    except RuntimeError as e:
+        return _live_unavailable_payload(svc, e, lead=lead, district=district)
 
 
 @app.get("/api/nowcast/risk-map", tags=["Nowcasting"])
@@ -247,28 +259,26 @@ async def nowcast_risk_map(
     svc: NowcastService = Depends(_get_service),
 ):
     """Generate GeoJSON FeatureCollection for the 825 spatial grid cells."""
-    if mode == "live":
-        return JSONResponse(content={
-            "type": "FeatureCollection",
-            "features": [],
-            "properties": {
-                "status": "unavailable",
-                "mode": "live",
-                "message": "Spatial ML prediction grid is unavailable in live mode. Real-time ERA5 input is not connected."
-            }
-        })
     if lead not in SUPPORTED_LEADS:
         raise HTTPException(
             status_code=422,
             detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
         )
-    geojson = svc.get_risk_map(lead_hours=lead, as_polygon=as_polygon)
+    try:
+        geojson = svc.get_risk_map(lead_hours=lead, as_polygon=as_polygon, mode=mode)
+    except RuntimeError as e:
+        return JSONResponse(content={
+            "type": "FeatureCollection",
+            "features": [],
+            "properties": _live_unavailable_payload(svc, e, lead_hours=lead),
+        })
     return JSONResponse(content=geojson)
 
 
 @app.get("/api/nowcast/risk-surface", tags=["Nowcasting"])
 async def nowcast_risk_surface(
     lead: int = Query(2, description="Forecast horizon in hours (2, 3, 4, 5, 6)"),
+    mode: Optional[str] = Query(None, description="Operational mode ('historical' or 'live')"),
     svc: NowcastService = Depends(_get_service),
 ):
     """Serve pre-rendered continuous West Bengal risk surface as RGBA PNG."""
@@ -277,12 +287,17 @@ async def nowcast_risk_surface(
             status_code=422,
             detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
         )
-    png_bytes = svc.get_risk_surface_png(lead_hours=lead)
+    try:
+        png_bytes = svc.get_risk_surface_png(lead_hours=lead, mode=mode)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return Response(
         content=png_bytes,
         media_type="image/png",
         headers={
-            "Cache-Control": "public, max-age=3600",
+            # Live surfaces change every GFS cycle and must not be cached long;
+            # the frontend also cache-busts per refresh.
+            "Cache-Control": "no-cache" if str(mode).lower() == "live" else "public, max-age=3600",
             "X-Min-Lat": "21.5394",
             "X-Max-Lat": "26.9960",
             "X-Min-Lon": "86.6103",
@@ -306,14 +321,15 @@ async def nowcast_districts(
     svc: NowcastService = Depends(_get_service),
 ):
     """Retrieve real model-derived hazard metrics aggregated for all 12 districts."""
-    if mode == "live":
-        return []
     if lead not in SUPPORTED_LEADS:
         raise HTTPException(
             status_code=422,
             detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
         )
-    return svc.get_district_advisories(lead_hours=lead)
+    try:
+        return svc.get_district_advisories(lead_hours=lead, mode=mode)
+    except RuntimeError:
+        return []
 
 
 @app.get("/api/nowcast/thermodynamics", tags=["Nowcasting"])
@@ -322,12 +338,18 @@ async def nowcast_thermodynamics(
     mode: Optional[str] = Query(None, description="Operational mode ('historical' or 'live')"),
     svc: NowcastService = Depends(_get_service),
 ):
-    """Retrieve real atmospheric thermodynamic diagnostics (CAPE, CIN, Shear)."""
-    if mode == "live":
+    """Retrieve real atmospheric thermodynamic diagnostics (CAPE, CIN, Shear).
+
+    These are derived from the historical case-study input window at t=0. The
+    live pipeline ingests the same variables but this diagnostic panel is not
+    yet wired to recompute them per live cycle, so rather than presenting
+    historical thermodynamics as if they were current, live mode reports them
+    as not yet available."""
+    if str(mode).lower() == "live":
         return {
             "status": "unavailable",
             "mode": "live",
-            "message": "Upper-air sounding / ERA5 vertical profile is not available in real time (~5 day latency).",
+            "message": "Vertical thermodynamic profile is not yet computed for the live cycle.",
             "cape_j_kg": None,
             "cin_j_kg": None,
             "bulk_shear_0_6km_mps": None,
@@ -365,14 +387,15 @@ async def nowcast_high_risk_cells(
     svc: NowcastService = Depends(_get_service),
 ):
     """Retrieve verified high-risk ML grid cells for the requested forecast lead."""
-    if mode == "live":
-        return []
     if lead not in SUPPORTED_LEADS:
         raise HTTPException(
             status_code=422,
             detail=f"Invalid lead time {lead}h. Supported: {SUPPORTED_LEADS}",
         )
-    return svc.get_high_risk_cells(lead_hours=lead, top_k=top_k)
+    try:
+        return svc.get_high_risk_cells(lead_hours=lead, top_k=top_k, mode=mode)
+    except RuntimeError:
+        return []
 
 
 @app.get("/api/nowcast/xai", tags=["Nowcasting"])
@@ -391,7 +414,7 @@ async def get_west_bengal_boundaries():
     """Return official West Bengal district GeoJSON boundaries."""
     global _DISTRICTS_GEOJSON_CACHE
     if _DISTRICTS_GEOJSON_CACHE is None:
-        geojson_path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_districts.geojson")
+        geojson_path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_districts_full.geojson")
         if not os.path.exists(geojson_path):
             raise HTTPException(status_code=404, detail="District boundary GeoJSON not found")
         with open(geojson_path, "r", encoding="utf-8") as f:
@@ -404,7 +427,7 @@ async def get_state_boundary():
     """Return official outer West Bengal state administrative boundary GeoJSON."""
     global _STATE_GEOJSON_CACHE
     if _STATE_GEOJSON_CACHE is None:
-        geojson_path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal.geojson")
+        geojson_path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_full.geojson")
         if not os.path.exists(geojson_path):
             raise HTTPException(status_code=404, detail="State boundary GeoJSON not found")
         with open(geojson_path, "r", encoding="utf-8") as f:
@@ -579,21 +602,29 @@ async def nowcast_point(
     lead: int = Query(2, description="Forecast lead horizon in hours (2-6)"),
     mode: str = Query("live", description="Operational mode ('live' or 'historical')"),
 ):
-    """Query location-specific meteorological observations and SevereWeatherNet V2 predictions."""
+    """Query location-specific forecast values for the selected mode and horizon."""
     svc = _get_service()
     if lead not in SUPPORTED_LEADS:
         lead = 2
 
-    inspection = svc.get_point_inspection(lat, lon, lead_hours=lead)
-    inspection["mode"] = mode
+    try:
+        inspection = svc.get_point_inspection(lat, lon, lead_hours=lead, mode=mode)
+    except RuntimeError as e:
+        return _live_unavailable_payload(svc, e, lat=lat, lon=lon, lead_hours=lead)
+
     inspection["server_time_utc"] = datetime.now(timezone.utc).isoformat()
 
-    # Check proximity to operational AWS telemetry station (North 24 Parganas)
+    # A point outside the state carries no forecast; return the rejection as-is.
+    if not inspection.get("inside_monitored_region", True):
+        return inspection
+
+    # Surface observation point (a single reporting location, NOT the source of
+    # the spatial forecast -- that comes from the gridded operational analysis).
     dist_to_station = ((lat - LATITUDE)**2 + (lon - LONGITUDE)**2)**0.5
     if dist_to_station < 0.25:
         weather = await current_weather(lat, lon)
         inspection["live_station_telemetry"] = {
-            "station_name": "North 24 Parganas AWS Station (22.72°N, 88.48°E)",
+            "station_name": "Surface observation point (22.72°N, 88.48°E)",
             "temperature_c": weather.get("temperature"),
             "humidity_pct": weather.get("humidity"),
             "rainfall_mm": weather.get("rainfall_1h"),
@@ -605,11 +636,12 @@ async def nowcast_point(
     else:
         inspection["live_station_telemetry"] = None
 
-    if mode == "live":
-        inspection["pipeline_status"] = "OPERATIONAL ML INPUT PIPELINE PENDING"
-        inspection["pipeline_note"] = "SevereWeatherNet V2 nowcast active. Operational real-time 3D NWP/ERA5 atmospheric input feed pending (~5d latency for Copernicus reanalysis)."
+    if inspection.get("mode") == "live":
+        status = svc.get_live_status()
+        inspection["pipeline_status"] = "LIVE (STALE)" if status["is_stale"] else "LIVE"
+        inspection["data_freshness"] = status
     else:
-        inspection["pipeline_status"] = "HISTORICAL CASE STUDY (ERA5)"
+        inspection["pipeline_status"] = "HISTORICAL CASE STUDY"
 
     return inspection
 
@@ -618,12 +650,17 @@ async def nowcast_point(
 async def mode_status():
     """Return current system capability status for live vs historical modes."""
     svc = _get_service()
+    live_status = svc.get_live_status()
     return {
         "live_surface_obs": True,
-        "live_surface_source": "OpenWeather API",
-        "live_ml_nowcast": False,
-        "ml_nowcast_reason": "ERA5 reanalysis atmospheric input is not available in real time (~5 day latency). SevereWeatherNet V2 requires 6 hourly timesteps of 9 surface + 5 pressure-level variables across a 33x25 grid.",
-        "ml_nowcast_available_in": "Historical Case Study mode",
+        "live_surface_source": "Surface observation provider",
+        "live_ml_nowcast": live_status["available"],
+        "ml_nowcast_reason": (
+            "Live nowcast is generated from the operational gridded atmospheric analysis."
+            if live_status["available"]
+            else (live_status["error"] or "Operational atmospheric input has not been ingested yet.")
+        ),
+        "live_status": live_status,
         "historical_case": {
             "event": "Kalbaishakhi Pre-Monsoon Convective Squall",
             "valid_time": svc.current_valid_time,
@@ -681,20 +718,33 @@ async def live_surface(
 
 @app.get("/api/live/ml-status", tags=["Live"])
 async def live_ml_status():
-    """Return honest status of ML nowcast input availability for live mode."""
+    """Technical/diagnostic status of the live operational input pipeline,
+    including full per-timestep provenance of the atmospheric input actually
+    used for the current live prediction."""
+    svc = _get_service()
+    status = svc.get_live_status()
     return {
-        "available": False,
-        "reason": "ERA5 reanalysis atmospheric input is not available in real time. ERA5 data has approximately 5-day processing latency from ECMWF/Copernicus.",
+        "available": status["available"],
+        "reason": (
+            "Operational gridded atmospheric analysis ingested successfully."
+            if status["available"]
+            else (status["error"] or "Operational atmospheric input has not been ingested yet.")
+        ),
         "model": "SevereWeatherNet V2 Calibrated",
-        "required_inputs": [
-            {"name": "ERA5 Surface Variables", "variables": "u10, v10, d2m, t2m, sp, cape, cin, tcwv, tp", "status": "UNAVAILABLE", "reason": "Reanalysis data, ~5 day latency"},
-            {"name": "ERA5 Pressure Wind (700/850/1000 hPa)", "variables": "u, v", "status": "UNAVAILABLE", "reason": "Reanalysis data, ~5 day latency"},
-            {"name": "ERA5 Pressure Thermo (250/300/500/700 hPa)", "variables": "z, q, t", "status": "UNAVAILABLE", "reason": "Reanalysis data, ~5 day latency"},
-            {"name": "SRTM DEM Elevation Grid", "variables": "elevation, lat, lon", "status": "AVAILABLE", "reason": "Static topographic data, always available"}
-        ],
-        "temporal_requirement": "6 consecutive hourly timesteps (t-5 to t0)",
+        "analysis_time": status["issue_time"],
+        "last_refreshed": status["last_refreshed"],
+        "is_stale": status["is_stale"],
+        "input_slot_provenance": status["input_slots"],
+        "temporal_requirement": "6 consecutive hourly timesteps (t-5h to t0)",
         "spatial_requirement": "33x25 grid at 0.25 degree resolution (20-28N, 84-90E)",
-        "workaround": "Use Historical Case Study mode (/?mode=historical) for full SevereWeatherNet V2 ML demonstration with the Kalbaishakhi 2024 convective event."
+        "known_limitations": [
+            "Operational analyses are published every 6 hours, so the five pre-t0 input "
+            "timesteps are time-interpolated between the two bracketing real analyses; "
+            "sub-6-hour atmospheric transients may be smoothed in the input.",
+            "The operational analysis source differs from the reanalysis system the model "
+            "was trained on, so live probabilities are directionally informative rather "
+            "than as precisely calibrated as the historical backtested metrics.",
+        ],
     }
 
 
@@ -755,7 +805,7 @@ async def data_health():
             },
             {
                 "name": "District Boundaries",
-                "source": "Data/BOUNDARIES/west_bengal_districts.geojson",
+                "source": "Data/BOUNDARIES/west_bengal_districts_full.geojson",
                 "status": "LOADED",
                 "detail": f"{len(svc.district_cells)} monitored districts",
                 "is_live": False,
@@ -911,6 +961,60 @@ async def predict_custom(
             "disclaimer": "Predictions generated by SevereWeatherNet V2 Calibrated model.",
         }
     )
+
+
+# ── Background live refresh ───────────────────────────────────────────────────
+# The dashboard polls every 5 minutes; the backend refreshes on the same cadence
+# so a poll always reads a recently-validated state. The underlying operational
+# analysis only publishes every 6 hours, and gfs_live caches per cycle, so a tick
+# that finds no new cycle is cheap (no re-download, no re-inference).
+LIVE_REFRESH_INTERVAL_SECONDS = 300
+
+_live_refresh_task: Optional["asyncio.Task"] = None
+_live_refresh_running = False
+
+
+async def _live_refresh_loop():
+    global _live_refresh_running
+    while True:
+        await asyncio.sleep(LIVE_REFRESH_INTERVAL_SECONDS)
+        if _live_refresh_running:
+            continue  # a previous tick is still in flight; skip rather than overlap
+        _live_refresh_running = True
+        try:
+            svc = get_nowcast_service()
+            # Blocking network + inference work must not stall the event loop.
+            await asyncio.get_running_loop().run_in_executor(None, svc.refresh_live_state)
+        except Exception as e:
+            # Never let a refresh failure kill the loop -- the next tick retries,
+            # and the previous live prediction stays served (flagged stale).
+            print(f"[live-refresh] tick failed: {e}")
+        finally:
+            _live_refresh_running = False
+
+
+@app.on_event("startup")
+async def _start_live_refresh():
+    global _live_refresh_task
+    if os.getenv("STORMSENSE_DISABLE_LIVE_REFRESH") == "1":
+        print("[live-refresh] disabled via STORMSENSE_DISABLE_LIVE_REFRESH")
+        return
+    _live_refresh_task = asyncio.create_task(_live_refresh_loop())
+    print(f"[live-refresh] background refresh every {LIVE_REFRESH_INTERVAL_SECONDS}s")
+
+
+@app.on_event("shutdown")
+async def _stop_live_refresh():
+    if _live_refresh_task is not None:
+        _live_refresh_task.cancel()
+
+
+@app.post("/api/live/refresh", tags=["Live"])
+async def force_live_refresh(svc: NowcastService = Depends(_get_service)):
+    """Trigger an immediate live refresh (used for operator-initiated refresh and
+    for verifying the refresh path without waiting for the 5-minute tick)."""
+    ok = await asyncio.get_running_loop().run_in_executor(None, svc.refresh_live_state)
+    return {"refreshed": ok, "live_status": svc.get_live_status()}
 
 
 if __name__ == "__main__":

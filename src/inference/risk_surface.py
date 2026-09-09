@@ -17,20 +17,28 @@ from scipy.ndimage import gaussian_filter
 from PIL import Image
 import matplotlib.path as mpath
 
-# Official West Bengal coordinate bounding box (degrees North, degrees East)
-WB_BOUNDS_LEAFLET = [[21.5394, 86.6103], [26.9960, 89.8828]]
+# Official West Bengal bounding box (degrees North, degrees East), derived from
+# the COMPLETE 23-district state outline (see scripts/build_wb_boundaries.py).
+# The previously used box stopped at 26.996N / 86.6103E, which cut off Darjeeling
+# and Kalimpong in the north and Purulia in the west.
+WB_BOUNDS_LEAFLET = [[21.5394, 85.8325], [27.2206, 89.8828]]
 WB_MIN_LAT = 21.5394
-WB_MAX_LAT = 26.9960
-WB_MIN_LON = 86.6103
+WB_MAX_LAT = 27.2206
+WB_MIN_LON = 85.8325
 WB_MAX_LON = 89.8828
+
+# Authoritative full-state geometry. west_bengal.geojson (the original file) only
+# contained 13 of 23 districts and is retained untouched for reference.
+WB_STATE_GEOJSON = "Data/BOUNDARIES/west_bengal_full.geojson"
+WB_DISTRICTS_GEOJSON = "Data/BOUNDARIES/west_bengal_districts_full.geojson"
 
 DEFAULT_H = 300
 DEFAULT_W = 200
 
 
 def get_or_create_wb_mask(
-    geojson_path: str = "Data/BOUNDARIES/west_bengal.geojson",
-    cache_path: str = "Data/BOUNDARIES/wb_mask_300x200.npy",
+    geojson_path: str = WB_STATE_GEOJSON,
+    cache_path: str = "Data/BOUNDARIES/wb_mask_full_300x200.npy",
     h: int = DEFAULT_H,
     w: int = DEFAULT_W,
 ) -> np.ndarray:
@@ -49,8 +57,10 @@ def get_or_create_wb_mask(
     with open(geojson_path, "r", encoding="utf-8") as f:
         wb_data = json.load(f)
 
-    coords = wb_data["features"][0]["geometry"]["coordinates"]
-    paths = [mpath.Path(poly[0]) for poly in coords]
+    geom = wb_data["features"][0]["geometry"]
+    # Accept either Polygon or MultiPolygon; a dissolved state outline can be
+    # either depending on whether offshore islands stay separate.
+    polygons = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
 
     lats_fine = np.linspace(WB_MAX_LAT, WB_MIN_LAT, h)  # North to South
     lons_fine = np.linspace(WB_MIN_LON, WB_MAX_LON, w)  # West to East
@@ -58,8 +68,11 @@ def get_or_create_wb_mask(
     pts = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
 
     mask_flat = np.zeros(len(pts), dtype=bool)
-    for p in paths:
-        bb = p.get_extents()
+    for rings in polygons:
+        if not rings:
+            continue
+        outer = mpath.Path(rings[0])
+        bb = outer.get_extents()
         in_bb = (
             (pts[:, 0] >= bb.x0)
             & (pts[:, 0] <= bb.x1)
@@ -68,7 +81,11 @@ def get_or_create_wb_mask(
         )
         if not np.any(in_bb):
             continue
-        mask_flat[in_bb] |= p.contains_points(pts[in_bb])
+        inside = outer.contains_points(pts[in_bb])
+        # Subtract interior rings (holes) so enclaves are not painted as land.
+        for hole in rings[1:]:
+            inside &= ~mpath.Path(hole).contains_points(pts[in_bb])
+        mask_flat[in_bb] |= inside
 
     mask = mask_flat.reshape(h, w)
     try:
