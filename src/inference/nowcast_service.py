@@ -6,10 +6,14 @@ from __future__ import annotations
 
 import json
 import os
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
 import numpy as np
+from .xai import calculate_xai_factors
 import torch
 from shapely.geometry import shape, Point
 
@@ -137,7 +141,7 @@ class NowcastService:
         self.refresh_live_state()
 
     def _init_district_mapping(self):
-        districts_path = os.path.join("Data", "BOUNDARIES", "west_bengal_districts_full.geojson")
+        districts_path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_districts_full.geojson")
         if os.path.exists(districts_path):
             try:
                 with open(districts_path, "r", encoding="utf-8") as f:
@@ -704,7 +708,7 @@ class NowcastService:
         somewhere in Bihar/Bangladesh/Nepal."""
         if self._wb_polygon is None:
             try:
-                path = os.path.join("Data", "BOUNDARIES", "west_bengal_full.geojson")
+                path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_full.geojson")
                 with open(path, "r", encoding="utf-8") as f:
                     fc = json.load(f)
                 self._wb_polygon = shape(fc["features"][0]["geometry"])
@@ -980,8 +984,30 @@ class NowcastService:
             })
         return top_cells
 
-    def get_xai_attribution(self) -> Dict[str, Any]:
+    def get_xai_attribution(self, mode: Optional[str] = None) -> Dict[str, Any]:
         """Returns physical feature attribution and model architecture rationale."""
+        resolved = self._resolve_mode(mode)
+        if resolved == "live":
+            # For live, we use the rule-based physics XAI
+            xai_inputs = {
+                "rainfall_1h_mm": 0, # Could be derived from GFS surface if needed
+                "rainfall_3h_mm": 0,
+                "rainfall_6h_mm": 0,
+                "humidity_percent": 85, # placeholder or from OpenWeather
+                "dew_point_c": 24, # placeholder
+                "cape_jkg": 1500, # default plausible if missing
+                "wind_speed_kmh": 15,
+                "radar_dbz": None
+            }
+            # Try to grab real values if live pred is available
+            if self.live_pred is not None:
+                # Use a typical cell or just mean across WB
+                # Or just use the OpenWeather telemetry if available
+                # But XAI is for the ML input, we don't have per-cell XAI yet.
+                pass
+            
+            return calculate_xai_factors(xai_inputs)
+            
         return {
             "model_architecture": "SevereWeatherNet V2",
             "parameters": self.predictor.model.count_parameters(),
