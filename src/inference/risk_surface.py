@@ -29,8 +29,9 @@ WB_MAX_LON = 89.8828
 
 # Authoritative full-state geometry. west_bengal.geojson (the original file) only
 # contained 13 of 23 districts and is retained untouched for reference.
-WB_STATE_GEOJSON = "Data/BOUNDARIES/west_bengal_full.geojson"
-WB_DISTRICTS_GEOJSON = "Data/BOUNDARIES/west_bengal_districts_full.geojson"
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+WB_STATE_GEOJSON = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_full.geojson")
+WB_DISTRICTS_GEOJSON = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_districts_full.geojson")
 
 DEFAULT_H = 300
 DEFAULT_W = 200
@@ -38,11 +39,14 @@ DEFAULT_W = 200
 
 def get_or_create_wb_mask(
     geojson_path: str = WB_STATE_GEOJSON,
-    cache_path: str = "Data/BOUNDARIES/wb_mask_full_300x200.npy",
+    cache_path: str = None,
     h: int = DEFAULT_H,
     w: int = DEFAULT_W,
 ) -> np.ndarray:
     """Retrieve or precompute the 2D boolean mask for the West Bengal boundary."""
+    if cache_path is None:
+        cache_path = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "wb_mask_full_300x200.npy")
+    
     if os.path.exists(cache_path):
         try:
             mask = np.load(cache_path)
