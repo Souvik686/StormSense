@@ -1,4 +1,4 @@
-/**
+﻿/**
  * StormSense — Operational Nowcasting Frontend Engine
  *
  * Real Data Integration:
@@ -107,10 +107,10 @@
 
   // Static reference location for monitored station
   var DEFAULT_LOCATION = {
-    district: "North 24 Parganas",
+    district: "West Bengal",
     state: "West Bengal",
     country: "India",
-    shortLabel: "North 24 Parganas, West Bengal",
+    shortLabel: "West Bengal",
     lat: 22.724,
     lon: 88.479,
     subdivisions: ["Barasat Sadar", "Barrackpore", "Bangaon", "Basirhat", "Bidhannagar"],
@@ -232,7 +232,7 @@
         setText("live-refresh-countdown", formatCountdown(liveCountdownSeconds));
 
         if (isManual) {
-          window.showToast("Refreshed live surface observation for North 24 Parganas", "check_circle");
+          window.showToast("Refreshed live surface observation for West Bengal", "check_circle");
         }
       })
       .catch(function (err) {
@@ -611,7 +611,7 @@
         clusterLabel: "ML Engine Online",
         slaLabel: "CALIBRATED",
         versionLabel: "StormSense",
-        deskLabel: "North 24 Parganas desk",
+        deskLabel: "West Bengal desk",
         freshnessLabel: "LIVE INGEST · t=0"
       },
       disclaimer: "StormSense spatial nowcasting. Multi-task ConvGRU evaluated on 4,322 held-out 2024 test sequences."
@@ -680,7 +680,7 @@
           heavyRainfallPct: rainMm,
           flashFloodPct: floodPct,
           confidencePct: d.confidence_pct != null ? d.confidence_pct : 92,
-          isPrimary: d.is_primary || name === "North 24 Parganas",
+          isPrimary: d.is_primary || name === "West Bengal",
           note: d.note || "StormSense multi-cell risk aggregation.",
           validUntil: d.valid_until || formatUtcDateTime(new Date(parseUtcIso(issueTime).getTime() + lead * 3600 * 1000))
         };
@@ -1209,7 +1209,7 @@
       var floodPct = d.flashFloodPct != null ? d.flashFloodPct : (d.flash_flood_pct != null ? d.flash_flood_pct : 0);
       var overallPct = d.overallPct != null ? d.overallPct : (d.overall_pct != null ? d.overall_pct : 0);
       var note = d.note || d.body || "StormSense multi-cell risk aggregation across district boundaries.";
-      var isPrimary = d.isPrimary != null ? d.isPrimary : (d.is_primary || name === "North 24 Parganas");
+      var isPrimary = d.isPrimary != null ? d.isPrimary : (d.is_primary || name === "West Bengal");
       var cls = levelClass(riskLevel);
       var ring = isPrimary ? "border-2 border-cyan-500/80 shadow-cyan-500/10" : "border " + cls.border;
       var conf = d.confidencePct != null ? d.confidencePct : 92;
@@ -1724,7 +1724,7 @@
           '<span>LIVE STATION TELEMETRY</span>' +
           '<span style="color:#38bdf8;">t=0</span>' +
         '</div>' +
-        '<div style="color:#ffffff;font-weight:bold;margin-bottom:4px;">North 24 Parganas Weather Station</div>' +
+        '<div style="color:#ffffff;font-weight:bold;margin-bottom:4px;">Live Telemetry Station</div>' +
         '<div style="margin-bottom:2px;">Location: <strong>22.72°N, 88.48°E</strong></div>' +
         '<div style="margin-bottom:2px;">Temperature: <strong style="color:#34d399;">' + temp + '</strong></div>' +
         '<div style="margin-bottom:2px;">1h Rain: <strong>' + rain + ' mm</strong></div>' +
@@ -1755,7 +1755,7 @@
           '<span>LIVE STATION TELEMETRY</span>' +
           '<span style="color:#38bdf8;">t=0</span>' +
         '</div>' +
-        '<div style="color:#ffffff;font-weight:bold;margin-bottom:4px;">North 24 Parganas Weather Station</div>' +
+        '<div style="color:#ffffff;font-weight:bold;margin-bottom:4px;">Live Telemetry Station</div>' +
         '<div style="margin-bottom:2px;">Location: <strong>22.72°N, 88.48°E</strong></div>' +
         '<div style="margin-bottom:2px;">Temperature: <strong style="color:#34d399;">' + temp + '</strong></div>' +
         '<div style="margin-bottom:2px;">1h Rain: <strong>' + rain + ' mm</strong></div>' +
@@ -2334,7 +2334,7 @@
     "Malda / Murshidabad": [24.60, 88.20],
     "Purulia / Bankura": [23.28, 86.70],
     "Purba Bardhaman & Damodar": [23.24, 87.86],
-    "North 24 Parganas Delta": [22.724, 88.479],
+    "West Bengal Coastal Delta": [22.724, 88.479],
     "Kolkata Metropolitan Area": [22.572, 88.363]
   };
 
@@ -2466,7 +2466,7 @@
           lead_horizon_hours: lead,
           issuing_office: "India Meteorological Department, Regional Meteorological Centre, Kolkata",
           target_region: "Gangetic West Bengal (20.0°N–28.0°N, 84.0°E–90.0°E)",
-          primary_district: "North 24 Parganas",
+          primary_district: "West Bengal",
           model_system: "StormSense (Multi-Task Deep Learning Nowcaster)",
           model_checkpoint: "v2_calibrated_best.pt",
           verified_test_metrics_2024: {
@@ -2537,3 +2537,5 @@
              console.error("Manual refresh failed:", err);
         });
   };
+
+

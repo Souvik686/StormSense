@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+﻿<!DOCTYPE html><html class="dark" lang="en" style=""><head>
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
 <title>StormSense | AI Severe Weather Early Warning</title>
@@ -55,7 +55,7 @@
         <h1 class="text-white text-base font-extrabold tracking-tight font-sans">StormSense</h1>
         <span class="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-[9px] font-bold tracking-wider uppercase font-mono shadow-sm shadow-cyan-500/20">CALIBRATED ML</span>
       </div>
-      <span class="text-[11px] text-slate-400 font-medium tracking-tight truncate" id="bind-location-line">North 24 Parganas, West Bengal, India</span>
+      <span class="text-[11px] text-slate-400 font-medium tracking-tight truncate" id="bind-location-line">West Bengal, India</span>
     </div>
   </div>
 
@@ -80,7 +80,7 @@
       <span class="text-[9px] text-cyan-200 bg-cyan-500/20 px-2 py-0.5 rounded-full font-mono font-bold border border-cyan-500/40 tracking-wider">CALIBRATED V2</span>
     </div>
     <div class="text-white font-bold text-xs mb-1.5 leading-snug relative z-10" id="bind-sidebar-alert-title">
-      North 24 Parganas Convective Watch
+      West Bengal Convective Watch
     </div>
     <p class="text-[11px] text-slate-300 leading-relaxed mb-3.5 font-normal relative z-10" id="bind-sidebar-alert-body">
       AI severe weather forecast active for West Bengal.
@@ -259,7 +259,7 @@
 </header>
 <div class="operational-banner px-6 lg:px-8 flex items-center justify-between text-xs">
   <span id="bind-disclaimer">AI Severe Weather Early Warning Platform · Grid: 0.25° (~28 km)</span>
-  <span>Monitored District: <strong id="bind-district-name" class="text-cyan-300">North 24 Parganas</strong></span>
+  <span>Target Region: <strong id="bind-district-name" class="text-cyan-300">West Bengal</strong></span>
 </div>
 <!-- Scrollable Workspace -->
 <div class="p-6 lg:p-8 flex flex-col gap-8 max-w-[1700px] w-full mx-auto" id="view-dashboard" style="padding-bottom: 5rem;">
@@ -268,7 +268,7 @@
 <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
 <div>
 <div class="flex items-center gap-2.5 mb-1 flex-wrap">
-<h2 class="text-white text-2xl lg:text-3xl font-extrabold tracking-tight" id="bind-district-name-h2">North 24 Parganas Nowcasting Desk</h2>
+<h2 class="text-white text-2xl lg:text-3xl font-extrabold tracking-tight" id="bind-district-name-h2">West Bengal Nowcasting Desk</h2>
 <span class="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider font-mono flex items-center gap-1.5" id="desk-mode-pill">
   <span class="size-2 rounded-full bg-emerald-400 animate-pulse" id="desk-mode-dot"></span>
   <span id="desk-mode-label">LIVE MONITORING</span>
@@ -297,7 +297,7 @@
 <option value="Malda / Murshidabad">Malda / Murshidabad</option>
 <option value="Purulia / Bankura">Purulia / Bankura</option>
 <option value="Purba Bardhaman &amp; Damodar">Purba Bardhaman &amp; Damodar Basin</option>
-<option value="North 24 Parganas Delta">North 24 Parganas Coastal Delta</option>
+<option value="Coastal Delta">West Bengal Coastal Delta</option>
 <option value="Kolkata Metropolitan Area">Kolkata Metropolitan Area</option>
 </select>
 </div>
@@ -420,7 +420,7 @@
 </div>
 <div class="flex items-center justify-between text-[11px] text-slate-300 pt-3 border-t border-amber-500/30">
 <span class="font-bold text-amber-300" id="kpi-overall-stage">WATCH</span>
-<span class="text-slate-400 font-medium" id="kpi-overall-area">North 24 Parganas</span>
+<span class="text-slate-400 font-medium" id="kpi-overall-area">West Bengal</span>
 </div>
 </div>
 </div>
@@ -454,7 +454,7 @@
 <span class="text-sm font-bold text-white tracking-wide">Interactive Nowcasting Map</span>
 <span class="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-mono">LEAFLET MAP</span>
 </div>
-<span class="text-[11px] text-slate-400 font-mono">North 24 Parganas, West Bengal (22.724°N, 88.479°E)</span>
+<span class="text-[11px] text-slate-400 font-mono">West Bengal (22.724°N, 88.479°E)</span>
 </div>
 </div>
 <!-- Time Horizon Controls & Operational Pipeline Status (Available in both Live and Historical) -->
@@ -472,7 +472,7 @@
 </div>
 <!-- FUTURE MAP: mount Leaflet/MapLibre here (#map-radar-placeholder).
      Planned: N24 Parganas boundary, live location, weather/radar layers, hazard zones, district risk. -->
-<div id="map-radar-placeholder" class="relative w-full h-[460px] bg-[#070b12] overflow-hidden rounded-b-2xl" data-location="North 24 Parganas, West Bengal, India">
+<div id="map-radar-placeholder" class="relative w-full h-[460px] bg-[#070b12] overflow-hidden rounded-b-2xl" data-location="West Bengal, India">
 <!-- Demo hotspots container (preserved for Phase 1 compatibility) -->
 <div id="radar-hotspots" class="pointer-events-none z-[450]"></div>
 <!-- Severe Weather Risk Legend HUD -->
@@ -499,7 +499,7 @@
 <span class="material-symbols-outlined text-sm">zoom_out_map</span>
 <span id="label-map-domain">WB Focus</span>
 </button>
-<button class="size-9 bg-slate-900/90 hover:bg-cyan-950/80 text-slate-200 hover:text-cyan-400 rounded-xl border border-slate-700 hover:border-cyan-500/50 flex items-center justify-center shadow-lg transition-all relative group cursor-pointer" id="btn-my-location" onclick="window.handleMyLocationClick()" title="Center on Monitored Sector (North 24 Parganas)"><span class="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">my_location</span><span class="absolute -top-1 -right-1 size-2.5 rounded-full bg-cyan-400 ring-2 ring-slate-900 hidden animate-ping" id="my-location-ping"></span></button>
+<button class="size-9 bg-slate-900/90 hover:bg-cyan-950/80 text-slate-200 hover:text-cyan-400 rounded-xl border border-slate-700 hover:border-cyan-500/50 flex items-center justify-center shadow-lg transition-all relative group cursor-pointer" id="btn-my-location" onclick="window.handleMyLocationClick()" title="Center on Monitored Sector (West Bengal)"><span class="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">my_location</span><span class="absolute -top-1 -right-1 size-2.5 rounded-full bg-cyan-400 ring-2 ring-slate-900 hidden animate-ping" id="my-location-ping"></span></button>
 <button class="size-9 bg-slate-900/90 hover:bg-slate-800 text-slate-200 rounded-xl border border-slate-700 flex items-center justify-center shadow-lg transition-colors cursor-pointer" id="btn-map-zoom-in" title="Zoom In">
 <span class="material-symbols-outlined text-lg">add</span>
 </button>
@@ -508,9 +508,9 @@
 </button>
 </div>
 <!-- Interactive User GPS Marker -->
-<div class="absolute hidden flex-col items-center cursor-pointer z-[500] transition-all duration-700 select-none" id="user-location-marker" onclick="window.toggleUserPinpointCard()" style="top: 46%; left: 47%; transform: translate(-50%, -50%);"><div class="relative flex items-center justify-center size-10"><span class="size-9 rounded-full bg-cyan-500/25 ring-2 ring-cyan-400/80 animate-ping absolute"></span><span class="size-6 rounded-full bg-cyan-500/40 absolute"></span><div class="size-4 rounded-full bg-cyan-400 border-2 border-white shadow-lg flex items-center justify-center"><div class="size-1.5 rounded-full bg-slate-950"></div></div></div><div class="mt-1 bg-slate-950/95 border border-cyan-400/70 px-2 py-1 rounded-lg shadow-2xl text-center backdrop-blur-md"><div class="flex items-center gap-1.5 justify-center"><span class="size-1.5 rounded-full bg-cyan-400 animate-pulse"></span><span class="text-[10px] font-bold text-white tracking-wide">Monitored Station</span></div><span class="text-[9px] text-cyan-300 font-mono block" id="user-marker-coords">22.72°N, 88.48°E</span></div></div>
+<div class="absolute hidden flex-col items-center cursor-pointer z-[500] transition-all duration-700 select-none" id="user-location-marker" onclick="window.toggleUserPinpointCard()" style="top: 46%; left: 47%; transform: translate(-50%, -50%);"><div class="relative flex items-center justify-center size-10"><span class="size-9 rounded-full bg-cyan-500/25 ring-2 ring-cyan-400/80 animate-ping absolute"></span><span class="size-6 rounded-full bg-cyan-500/40 absolute"></span><div class="size-4 rounded-full bg-cyan-400 border-2 border-white shadow-lg flex items-center justify-center"><div class="size-1.5 rounded-full bg-slate-950"></div></div></div><div class="mt-1 bg-slate-950/95 border border-cyan-400/70 px-2 py-1 rounded-lg shadow-2xl text-center backdrop-blur-md"><div class="flex items-center gap-1.5 justify-center"><span class="size-1.5 rounded-full bg-cyan-400 animate-pulse"></span><span class="text-[10px] font-bold text-white tracking-wide">Live Telemetry</span></div><span class="text-[9px] text-cyan-300 font-mono block" id="user-marker-coords">22.72°N, 88.48°E</span></div></div>
 <!-- User Pinpoint Context Card -->
-<div class="absolute top-4 left-4 z-[500] max-w-[270px] bg-slate-950/95 border border-cyan-500/70 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl hidden flex-col gap-2.5 transition-all pointer-events-auto" id="user-pinpoint-card"><div class="flex items-center justify-between border-b border-slate-800 pb-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-cyan-400 text-base">pin_drop</span><div><h5 class="text-xs font-bold text-white leading-tight">Station Hazard Profile</h5><span class="text-[10px] text-slate-400 font-mono" id="user-pinpoint-name">North 24 Parganas</span></div></div><button class="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer" onclick="window.toggleUserPinpointCard()"><span class="material-symbols-outlined text-sm">close</span></button></div><div class="grid grid-cols-2 gap-2 text-[10px] font-mono"><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">TARGET DISTRICT</span><span class="text-white font-bold text-xs" id="pinpoint-target-name">N 24 Parganas</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RESOLUTION</span><span class="text-cyan-400 font-bold text-xs">0.25° Grid</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">SEVERE RISK</span><span class="text-red-400 font-bold text-xs" id="pinpoint-severe-risk">...</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RAIN FORECAST</span><span class="text-amber-400 font-bold text-xs" id="pinpoint-rain-forecast">...</span></div></div><div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80"><button class="w-full py-1.5 px-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[10px] font-bold font-mono transition-colors flex items-center justify-center gap-1 cursor-pointer" onclick="window.recenterOnUser()"><span class="material-symbols-outlined text-xs">center_focus_strong</span> Recenter Reticle Pin</button></div></div>
+<div class="absolute top-4 left-4 z-[500] max-w-[270px] bg-slate-950/95 border border-cyan-500/70 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl hidden flex-col gap-2.5 transition-all pointer-events-auto" id="user-pinpoint-card"><div class="flex items-center justify-between border-b border-slate-800 pb-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-cyan-400 text-base">pin_drop</span><div><h5 class="text-xs font-bold text-white leading-tight">Station Hazard Profile</h5><span class="text-[10px] text-slate-400 font-mono" id="user-pinpoint-name">West Bengal</span></div></div><button class="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer" onclick="window.toggleUserPinpointCard()"><span class="material-symbols-outlined text-sm">close</span></button></div><div class="grid grid-cols-2 gap-2 text-[10px] font-mono"><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">Target Region</span><span class="text-white font-bold text-xs" id="pinpoint-target-name">West Bengal</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RESOLUTION</span><span class="text-cyan-400 font-bold text-xs">0.25° Grid</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">SEVERE RISK</span><span class="text-red-400 font-bold text-xs" id="pinpoint-severe-risk">...</span></div><div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800"><span class="text-slate-400 block text-[9px]">RAIN FORECAST</span><span class="text-amber-400 font-bold text-xs" id="pinpoint-rain-forecast">...</span></div></div><div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80"><button class="w-full py-1.5 px-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[10px] font-bold font-mono transition-colors flex items-center justify-center gap-1 cursor-pointer" onclick="window.recenterOnUser()"><span class="material-symbols-outlined text-xs">center_focus_strong</span> Recenter Reticle Pin</button></div></div>
 </div>
 <!-- Model Status Footer -->
 <div class="px-5 py-3 bg-slate-950/80 border-t border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs">
@@ -687,7 +687,7 @@
 <span id="desk-peak-prob-badge" class="text-[10px] font-mono bg-red-500/20 text-red-400 px-2 py-0.5 rounded border border-red-500/40 font-bold">PEAK PROB: 88.4%</span>
 </div>
 </div>
-<div id="radar-map-container" class="relative h-[420px] w-full bg-[#070b12] overflow-hidden" data-location="North 24 Parganas, West Bengal, India"></div>
+<div id="radar-map-container" class="relative h-[420px] w-full bg-[#070b12] overflow-hidden" data-location="West Bengal, India"></div>
 <div class="p-3 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono">
 <span class="">Domain: 20.0–28.0°N, 84.0–90.0°E (West Bengal)</span>
 <span class="text-cyan-400 font-bold" id="desk-lead-indicator">+2h Calibrated Horizon</span>
@@ -998,7 +998,7 @@
 <span class="text-xs text-slate-400 font-mono">Autoregressive ConvGRU Decoder Output for Monitored Sector</span>
 </div>
 </div>
-<span class="text-xs font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-lg font-bold" id="evolution-district-tag">North 24 Parganas</span>
+<span class="text-xs font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-lg font-bold" id="evolution-district-tag">West Bengal</span>
 </div>
 <!-- Dynamic Horizon Evolution Bars -->
 <div class="flex flex-col gap-3 pt-2 font-mono text-xs" id="evolution-timeline-container">
@@ -1219,7 +1219,7 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 <span class="font-bold text-white text-sm">Surface Weather Stations</span>
 <span class="size-2 rounded-full bg-blue-400"></span>
 </div>
-<p class="text-xs text-slate-400 mb-3">Monitored surface telemetry station at North 24 Parganas (22.72&deg;N, 88.48&deg;E) for live ambient observations.</p>
+<p class="text-xs text-slate-400 mb-3">Monitored surface telemetry station at West Bengal (22.72&deg;N, 88.48&deg;E) for live ambient observations.</p>
 <span class="text-[11px] font-mono text-blue-400 font-bold">TELEMETRY ACTIVE</span>
 </div>
 </div>
@@ -1376,7 +1376,7 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
 <span class="text-slate-400 block">SURFACE TELEMETRY</span>
 <span class="text-white text-base font-bold">Surface observation provider</span>
-<span class="text-[10px] text-slate-500 block mt-1">Station 22.72&deg;N, 88.48&deg;E (North 24 Parganas)</span>
+<span class="text-[10px] text-slate-500 block mt-1">Station 22.72&deg;N, 88.48&deg;E (West Bengal)</span>
 </div>
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
 <span class="text-slate-400 block">INSAT-3DR ARCHIVE</span>
@@ -1453,7 +1453,7 @@ Cancel
     </span>
     <span class="text-slate-600">|</span>
     <span class="text-slate-400">STATION:</span>
-    <span class="text-white font-semibold">North 24 Parganas (22.72°N, 88.48°E)</span>
+    <span class="text-white font-semibold">West Bengal (22.72°N, 88.48°E)</span>
   </div>
 </div>
 </main>
@@ -1466,4 +1466,5 @@ Cancel
 <script src="js/app.js"></script>
 
 </body></html>
+
 
