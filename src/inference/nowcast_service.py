@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -32,6 +33,7 @@ from src.inference.risk_surface import (
 from src.inference import gfs_live
 from src.utils.config import load_config, Config
 
+_SERVICE_LOCK = threading.Lock()
 _SERVICE_INSTANCE: Optional[NowcastService] = None
 
 
@@ -294,11 +296,11 @@ class NowcastService:
                         self.risk_surface_png_cache[lh] = generate_risk_surface_png(
                             severe_prob[li], self.lats, self.lons, mask=wb_mask
                         )
-                    print(f"[NowcastService] Precomputed continuous West Bengal risk surfaces for leads: {list(self.risk_surface_png_cache.keys())}")
+                    print(f"[NowcastService] Precomputed historical continuous West Bengal risk surfaces for leads: {list(self.risk_surface_png_cache.keys())}")
                 except Exception as e:
                     print(f"[NowcastService] Warning: Could not precompute risk surface PNGs: {e}")
 
-                print(f"[NowcastService] Operational state loaded. Valid time: {self.current_valid_time}")
+                print(f"[NowcastService] Historical (2024-05-05) operational state loaded. Valid time: {self.current_valid_time}")
             except Exception as e:
                 print(f"[NowcastService] Warning: Could not initialize operational cache: {e}")
 
@@ -440,7 +442,7 @@ class NowcastService:
     def _issue_time_for_mode(self, mode: Optional[str]) -> str:
         m = self._resolve_mode(mode)
         if m == "live":
-            return self.live_valid_time or self.current_valid_time
+            return self.live_valid_time or "Unknown"
         return self.current_valid_time
 
     # Operational analyses publish every 6h, and production lag means the newest
@@ -1066,5 +1068,7 @@ class NowcastService:
 def get_nowcast_service() -> NowcastService:
     global _SERVICE_INSTANCE
     if _SERVICE_INSTANCE is None:
-        _SERVICE_INSTANCE = NowcastService()
+        with _SERVICE_LOCK:
+            if _SERVICE_INSTANCE is None:
+                _SERVICE_INSTANCE = NowcastService()
     return _SERVICE_INSTANCE
