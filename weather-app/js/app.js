@@ -191,6 +191,21 @@
 
     var clockHeader = document.getElementById("header-clock-ist");
     if (clockHeader) clockHeader.textContent = shortTimeStr;
+
+    if (window.stormSenseMode === "live" && window.currentObsTime) {
+      var obsDate = new Date(window.currentObsTime);
+      var ageSeconds = Math.floor((now.getTime() - obsDate.getTime()) / 1000);
+      if (ageSeconds < 0) ageSeconds = 0;
+      var h = Math.floor(ageSeconds / 3600);
+      var m = Math.floor((ageSeconds % 3600) / 60);
+      var obsText = "";
+      if (h > 0) obsText = h + "h " + m + "m ago";
+      else if (m <= 1) obsText = "Just now";
+      else obsText = m + "m ago";
+      
+      var obsBadge = document.getElementById("header-obs-time-text");
+      if (obsBadge) obsBadge.textContent = obsText;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -202,6 +217,7 @@
       .then(function (data) {
         if (!data) return;
         window.StormSenseLiveSurface = data;
+        window.currentObsTime = data.observed_at_utc;
         var obs = data.observations || {};
 
         if (window.stormSenseMode === "live") {
