@@ -1,8 +1,8 @@
-"""Unified StormSense Nowcasting API Backend.
+﻿"""Unified StormSense Nowcasting API Backend.
 
 Integrates:
-1. Live station observations (OpenWeather API for t=0 ambient conditions).
-2. SevereWeatherNet V2 ML Nowcasting Engine (calibrated 2–6h spatial predictions).
+1. Live station observations (Live Station API API for t=0 ambient conditions).
+2. StormSense V2 ML Nowcasting Engine (calibrated 2–6h spatial predictions).
 3. GeoJSON multi-hazard spatial risk mapping (825 cells across West Bengal).
 4. District-level civil defense risk aggregation.
 5. Physical thermodynamic diagnostics (CAPE, CIN, bulk shear, wind convergence).
@@ -31,7 +31,7 @@ if PROJECT_ROOT not in sys.path:
 from src.inference.nowcast_service import get_nowcast_service, NowcastService
 from src.features.normalize import SINGLE_VARS, PRESSURE_VARS
 
-# Local OpenWeather client
+# Local Live Station API client
 try:
     from .openweather import get_current_weather, get_weather_forecast
 except (ImportError, ValueError):
@@ -48,7 +48,7 @@ app = FastAPI(
     version="2.0.0",
     description=(
         "Unified meteorological nowcasting backend combining live surface weather "
-        "observations with the SevereWeatherNet V2 Calibrated deep spatiotemporal engine "
+        "observations with the StormSense V2 Calibrated deep spatiotemporal engine "
         "for West Bengal, India."
     ),
 )
@@ -62,7 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# North 24 Parganas primary target coordinates
+# West Bengal primary target coordinates
 LATITUDE = 22.724
 LONGITUDE = 88.479
 SUPPORTED_LEADS = [2, 3, 4, 5, 6]
@@ -139,10 +139,10 @@ async def system_info():
     return {
         "project": "StormSense",
         "status": "online",
-        "model": "SevereWeatherNet V2 (Calibrated)",
+        "model": "StormSense V2 Nowcaster",
         "model_parameters": svc.predictor.model.count_parameters(),
         "supported_horizons": SUPPORTED_LEADS,
-        "primary_sector": "North 24 Parganas, West Bengal",
+        "primary_sector": "West Bengal",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -154,7 +154,7 @@ async def health():
     return {
         "status": "ok",
         "model_loaded": svc.predictor is not None,
-        "model_architecture": "SevereWeatherNet V2",
+        "model_architecture": "StormSense V2",
         "model_checkpoint": "v2_calibrated_best.pt",
         "parameters": svc.predictor.model.count_parameters(),
         "is_calibrated": svc.predictor.is_calibrated,
@@ -185,8 +185,8 @@ async def current_weather(
         rainfall_1h = rain.get("1h", 0.0)
 
         return {
-            "source": "Live Station Observation (OpenWeather)",
-            "location": "North 24 Parganas, West Bengal",
+            "source": "Live Station Observation (Live Station API)",
+            "location": "West Bengal",
             "latitude": lat,
             "longitude": lon,
             "temperature": data["main"]["temp"],
@@ -212,7 +212,7 @@ async def current_weather(
         # Graceful fallback to operational baseline if external API is unreachable
         return {
             "source": "Operational Offline Fallback",
-            "location": "North 24 Parganas, West Bengal",
+            "location": "West Bengal",
             "latitude": lat,
             "longitude": lon,
             "temperature": 29.5,
@@ -235,7 +235,7 @@ async def current_weather(
 @app.get("/api/nowcast/summary", tags=["Nowcasting"])
 async def nowcast_summary(
     lead: int = Query(2, description="Forecast horizon in hours (2, 3, 4, 5, 6)"),
-    district: str = Query("North 24 Parganas", description="District name"),
+    district: str = Query("West Bengal", description="District name"),
     mode: Optional[str] = Query(None, description="Operational mode ('historical' or 'live')"),
     svc: NowcastService = Depends(_get_service),
 ):
@@ -334,7 +334,7 @@ async def nowcast_districts(
 
 @app.get("/api/nowcast/thermodynamics", tags=["Nowcasting"])
 async def nowcast_thermodynamics(
-    district: str = Query("North 24 Parganas", description="District name"),
+    district: str = Query("West Bengal", description="District name"),
     mode: Optional[str] = Query(None, description="Operational mode ('historical' or 'live')"),
     svc: NowcastService = Depends(_get_service),
 ):
@@ -399,9 +399,9 @@ async def nowcast_high_risk_cells(
 
 
 @app.get("/api/nowcast/xai", tags=["Nowcasting"])
-async def nowcast_xai_attribution(svc: NowcastService = Depends(_get_service)):
+async def nowcast_xai_attribution(mode: Optional[str] = None, svc: NowcastService = Depends(_get_service)):
     """Retrieve atmospheric modality and physical diagnostic feature attribution."""
-    return svc.get_xai_attribution()
+    return svc.get_xai_attribution(mode=mode)
 
 
 # Cached GeoJSON boundaries
@@ -441,7 +441,7 @@ _BENCHMARK_CACHE = None
 
 @app.get("/api/benchmark/models", tags=["Benchmark"])
 async def get_model_benchmarks():
-    """Return verified held-out 2024 test metrics for SevereWeatherNet V2, V1, and Persistence baselines."""
+    """Return verified held-out 2024 test metrics for StormSense V2, V1, and Persistence baselines."""
     global _BENCHMARK_CACHE
     if _BENCHMARK_CACHE is None:
         metrics_path = os.path.join(PROJECT_ROOT, "Data", "outputs", "metrics", "test_evaluation.json")
@@ -506,7 +506,7 @@ async def get_model_benchmarks():
             "test_split": "Held-Out 2024 Convective Season (May 1 – October 31, 2024)",
             "verification_status": "Strict Temporal Lock (Zero Leakage, Single Test Evaluation)",
             "models": {
-                "SevereWeatherNet V2 Calibrated": {
+                "StormSense V2 Calibrated": {
                     "description": "Tri-stream ConvGRU (surface + pressure wind + thermo) with recurrent lead-time decoder & temperature scaling",
                     "parameters": 781889,
                     "mean_metrics": {
@@ -667,7 +667,7 @@ async def mode_status():
             "description": "Active severe thunderstorm case from the held-out 2024 test split"
         },
         "model": {
-            "name": "SevereWeatherNet V2 Calibrated",
+            "name": "StormSense V2 Calibrated",
             "checkpoint": "v2_calibrated_best.pt",
             "parameters": svc.predictor.model.count_parameters(),
             "is_calibrated": svc.predictor.is_calibrated
@@ -696,7 +696,7 @@ async def live_surface(
         "observed_at_utc": datetime.fromtimestamp(obs_timestamp, tz=timezone.utc).isoformat() if obs_timestamp else None,
         "server_time_utc": datetime.now(timezone.utc).isoformat(),
         "location": {
-            "name": "North 24 Parganas, West Bengal",
+            "name": "West Bengal",
             "latitude": lat,
             "longitude": lon
         },
@@ -730,7 +730,7 @@ async def live_ml_status():
             if status["available"]
             else (status["error"] or "Operational atmospheric input has not been ingested yet.")
         ),
-        "model": "SevereWeatherNet V2 Calibrated",
+        "model": "StormSense V2 Calibrated",
         "analysis_time": status["issue_time"],
         "last_refreshed": status["last_refreshed"],
         "is_stale": status["is_stale"],
@@ -753,7 +753,7 @@ async def data_health():
     """Return health status of each data pipeline component."""
     svc = _get_service()
     
-    # Check OpenWeather
+    # Check Live Station API
     surface_status = "UNKNOWN"
     surface_detail = ""
     try:
@@ -773,7 +773,7 @@ async def data_health():
         "components": [
             {
                 "name": "Surface Weather Observations",
-                "source": "OpenWeather API",
+                "source": "Live Station API API",
                 "status": surface_status,
                 "detail": surface_detail,
                 "is_live": surface_status == "ONLINE",
@@ -796,7 +796,7 @@ async def data_health():
                 "refresh_interval_seconds": None
             },
             {
-                "name": "SevereWeatherNet V2 Model",
+                "name": "StormSense V2 Model",
                 "source": "v2_calibrated_best.pt",
                 "status": "LOADED",
                 "detail": f"{svc.predictor.model.count_parameters():,} parameters, calibrated with temperature scaling",
@@ -818,9 +818,9 @@ async def data_health():
 @app.get("/api/nowcast/xai", tags=["Explainability"])
 @app.get("/api/nowcast/explanation", tags=["Explainability"])
 @app.get("/explanation", tags=["Explainability"])
-async def nowcast_xai(svc: NowcastService = Depends(_get_service)):
+async def nowcast_xai(mode: Optional[str] = None, svc: NowcastService = Depends(_get_service)):
     """Retrieve verified feature attributions and physical parameter roles."""
-    return svc.get_xai_attribution()
+    return svc.get_xai_attribution(mode=mode)
 
 
 # ── Backwards Compatibility Endpoints for Existing Frontend ──────────────────
@@ -835,14 +835,14 @@ async def stormsense_nowcast_compat(
 
     # Fetch live conditions
     live_weather = await current_weather(LATITUDE, LONGITUDE)
-    summary = svc.get_summary(lead_hours=lead, district="North 24 Parganas")
+    summary = svc.get_summary(lead_hours=lead, district="West Bengal")
 
     # Structure in exact shape expected by existing frontend
     return {
-        "location": "North 24 Parganas, West Bengal",
+        "location": "West Bengal",
         "latitude": LATITUDE,
         "longitude": LONGITUDE,
-        "source": "SevereWeatherNet V2 Calibrated ML + OpenWeather",
+        "source": "StormSense V2 Nowcaster + Live Station API",
         "current_conditions": {
             "temperature": live_weather["temperature"],
             "humidity": live_weather["humidity"],
@@ -909,11 +909,11 @@ async def stormsense_timeline_compat(svc: NowcastService = Depends(_get_service)
         })
 
     return {
-        "location": "North 24 Parganas, West Bengal",
+        "location": "West Bengal",
         "latitude": LATITUDE,
         "longitude": LONGITUDE,
         "horizon_hours": 6,
-        "source": "SevereWeatherNet V2 Calibrated ML",
+        "source": "StormSense V2 Calibrated ML",
         "timeline": timeline,
     }
 
@@ -958,7 +958,7 @@ async def predict_custom(
         content={
             "summary": summary,
             "risk_maps": risk_maps,
-            "disclaimer": "Predictions generated by SevereWeatherNet V2 Calibrated model.",
+            "disclaimer": "Predictions generated by StormSense V2 Calibrated model.",
         }
     )
 
@@ -1021,5 +1021,8 @@ if __name__ == "__main__":
     import uvicorn
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    print(f"Starting StormSense Mission Control with SevereWeatherNet V2 on http://{host}:{port}")
+    print(f"Starting StormSense Mission Control with StormSense V2 on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+
