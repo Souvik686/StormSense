@@ -160,7 +160,7 @@ LIVE mode is designed to represent the **current state of the atmosphere** separ
 
 The system combines:
 
-```text
+
 Current Weather Observations
             +
 NOAA GFS Atmospheric Data
@@ -662,4 +662,4 @@ Artificial Intelligence • Meteorology • Geospatial Intelligence • Early Wa
 
 © 2026 StormSense
 
-</div> ```
+</div> 
