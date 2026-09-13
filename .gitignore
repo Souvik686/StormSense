@@ -1,35 +1,185 @@
-# Secrets -- never commit real API keys (.env.example is the safe template)
-.env
-*.env
-!.env.example
+# ============================================================
+# STORMSENSE .gitignore
+# ============================================================
 
-# Large raw/derived data (14GB+ ERA5, SRTM, INSAT archives; 2.4GB preprocessed cache)
-Data/
-processed/
 
-# Model checkpoints and generated artifacts
-outputs/
-*.pt
-*.pth
+# ============================================================
+# 🔐 SECRETS — ALWAYS PRIVATE
+# ============================================================
+# NEVER commit your real .env or API keys.
+# .env.example is safe to commit.
 
-# Python
+# .env
+# *.env
+# !.env.example
+
+
+# ============================================================
+# 🔒 PRIVATE-ONLY / LARGE DATA CONTROL
+# ============================================================
+#
+# PRIVATE REPOSITORY:
+# -------------------
+# Keep these lines COMMENTED.
+# Collaborators can receive these files through GitHub.
+#
+# PUBLIC REPOSITORY:
+# ------------------
+# UNCOMMENT the appropriate lines before making the repository
+# public so large/private datasets are not committed.
+#
+# IMPORTANT:
+# These rules affect Git tracking. They do NOT automatically
+# remove files that are already tracked.
+#
+# ============================================================
+
+
+# ------------------------------------------------------------
+# RAW / LARGE DATA
+# ------------------------------------------------------------
+#
+# Data/ERA5/
+# Data/DEM/
+# Data/INSAT/
+# Data/RADAR/
+# Data/LIGHTNING/
+# Data/NORMAL_SAMPLES/
+# Data/RAINFALL_DISTRICT/
+# Data/IMD_RAINFALL/
+# Data/HISTORICAL_WEATHER/
+
+
+# ------------------------------------------------------------
+# LARGE PROCESSED DATA
+# ------------------------------------------------------------
+#
+# processed/cache/era5_memmap/
+
+
+# ------------------------------------------------------------
+# OPTIONAL: ALL OTHER DATA
+# ------------------------------------------------------------
+#
+# If you want to make the public repository completely
+# lightweight, you can instead use:
+#
+# Data/
+# processed/
+#
+# BUT DO NOT use those rules while you want the required
+# runtime assets below to be committed for your friends.
+
+
+# ------------------------------------------------------------
+# EXTRA TRAINING CHECKPOINTS
+# ------------------------------------------------------------
+#
+# These are training artifacts and are not required by the
+# runtime application:
+#
+# Data/outputs/checkpoints/best.pt
+# Data/outputs/checkpoints/last.pt
+# Data/outputs/checkpoints/v2_best.pt
+# Data/outputs/checkpoints/v2_best_baseline.pt
+# Data/outputs/checkpoints/v2_last.pt
+# Data/outputs/checkpoints/v2_plus_best.pt
+# Data/outputs/checkpoints/v2_plus_last.pt
+#
+# If making the repository public, you can ignore them with:
+#
+# Data/outputs/checkpoints/*.pt
+# Data/outputs/checkpoints/*.pth
+
+
+# ============================================================
+# ✅ REQUIRED STORMSENSE RUNTIME ASSETS
+# ============================================================
+#
+# These are intentionally NOT ignored.
+#
+# Required for LIVE:
+#
+# Data/outputs/checkpoints/v2_calibrated_best.pt
+# Data/processed/cache/norm_stats.json
+# Data/BOUNDARIES/*.geojson
+# Data/BOUNDARIES/*.npy
+# processed/cache/era5_memmap/dem_elevation_m.npy
+#
+# Historical:
+# processed/cache/era5_memmap/
+#
+
+
+# ============================================================
+# 🤖 MODEL CHECKPOINTS
+# ============================================================
+#
+# DO NOT globally ignore *.pt here because the runtime model
+# v2_calibrated_best.pt must remain available to collaborators.
+#
+# If you later decide to ignore all model files for a PUBLIC
+# repository, use:
+#
+# *.pt
+# *.pth
+#
+# and make sure the required runtime model is distributed
+# separately.
+
+
+# ============================================================
+# 🐍 PYTHON
+# ============================================================
+
 __pycache__/
 *.py[cod]
 *.egg-info/
+
 .pytest_cache/
+
 .venv/
 venv/
 
-# Local/archive backups
+
+# ============================================================
+# 📦 LOCAL / ARCHIVE FILES
+# ============================================================
+
 .archive/
 
-# GRIB/NetCDF scratch downloads
+
+# ============================================================
+# 📁 GENERATED / LOCAL OUTPUTS
+# ============================================================
+
+# These are local/generated outputs and are not required
+# for teammates to run the application.
+
+outputs/
+reports/
+
+
+# ============================================================
+# 🌐 SCRATCH / TEMPORARY FILES
+# ============================================================
+
 *.grib2
 *.idx
 *.nc
 
-# OS / editor
+*.log
+*.tmp
+*.bak
+*.swp
+
+
+# ============================================================
+# 💻 OS / EDITOR
+# ============================================================
+
 .DS_Store
 Thumbs.db
+
 .vscode/
 .idea/
