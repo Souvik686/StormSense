@@ -116,7 +116,9 @@ StormSense requires Python 3.13.
 
 Create a virtual environment:
 
-```text python -m venv venv ```
+```text 
+python -m venv venv
+```
 
 Activate it:
 
