@@ -27,7 +27,7 @@ Accept the invitation to the StormSense repository.
 
 Open:
 
-[Python 3.13.7 for Windows](https://www.python.org/downloads/release/python-3137/?utm_source=chatgpt.com)
+[Python 3.13.7 for Windows](https://www.python.org/ftp/python/3.13.7/python-3.13.7-amd64.exe?utm_source=chatgpt.com)
 
 Download Windows installer (64-bit).
 
