@@ -5,7 +5,7 @@ Direct runner serving both the StormSense frontend and the SevereWeatherNet V2 M
 Usage:
     python run_server.py
     - or -
-    python weather-app/backend/main.py
+    python backend/main.py
 """
 import importlib.util
 import os
@@ -15,7 +15,7 @@ repo_root = os.path.dirname(os.path.abspath(__file__))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-backend_path = os.path.join(repo_root, 'weather-app', 'backend', 'main.py')
+backend_path = os.path.join(repo_root, 'backend', 'main.py')
 spec = importlib.util.spec_from_file_location('unified_backend', backend_path)
 _mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(_mod)

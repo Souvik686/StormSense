@@ -166,16 +166,17 @@ def _find_latest_cycle(client: httpx.Client, max_lookback_cycles: int = 8) -> da
     )
 
 
-def _idx_url(cycle_time: datetime, base: str = AWS_BASE) -> str:
+def _idx_url(cycle_time: datetime, f_hour: int = 0, base: str = AWS_BASE) -> str:
     ymd = cycle_time.strftime("%Y%m%d")
     hh = cycle_time.strftime("%H")
+    fh = f"{f_hour:03d}"
     if base == AWS_BASE:
-        return f"{AWS_BASE}/gfs.{ymd}/{hh}/atmos/gfs.t{hh}z.pgrb2.0p25.f000.idx"
-    return f"{NOMADS_BASE}/gfs.{ymd}/{hh}/atmos/gfs.t{hh}z.pgrb2.0p25.f000.idx"
+        return f"{AWS_BASE}/gfs.{ymd}/{hh}/atmos/gfs.t{hh}z.pgrb2.0p25.f{fh}.idx"
+    return f"{NOMADS_BASE}/gfs.{ymd}/{hh}/atmos/gfs.t{hh}z.pgrb2.0p25.f{fh}.idx"
 
 
-def _grib_url(cycle_time: datetime, base: str = AWS_BASE) -> str:
-    return _idx_url(cycle_time, base)[:-4]  # strip ".idx"
+def _grib_url(cycle_time: datetime, f_hour: int = 0, base: str = AWS_BASE) -> str:
+    return _idx_url(cycle_time, f_hour, base)[:-4]  # strip ".idx"
 
 
 def _parse_idx(idx_text: str) -> List[List[str]]:
@@ -245,7 +246,7 @@ def _subset_to_domain(cropped_da: "xr.DataArray", lats: np.ndarray, lons: np.nda
     return arr
 
 
-def fetch_gfs_cycle(cycle_time: datetime, lats: np.ndarray, lons: np.ndarray) -> GfsCycle:
+def fetch_gfs_slice(cycle_time: datetime, f_hour: int, lats: np.ndarray, lons: np.ndarray) -> GfsCycle:
     """Fetch and regrid every required surface + pressure-level message for one
     real GFS f000 analysis cycle. Raises GfsFetchError naming the exact missing
     variable if anything required is unavailable -- never substitutes a guess."""
@@ -253,8 +254,8 @@ def fetch_gfs_cycle(cycle_time: datetime, lats: np.ndarray, lons: np.ndarray) ->
     for base in (AWS_BASE, NOMADS_BASE):
         try:
             with _http_client() as client:
-                idx_url = _idx_url(cycle_time, base)
-                grib_url = _grib_url(cycle_time, base)
+                idx_url = _idx_url(cycle_time, f_hour, base)
+                grib_url = _grib_url(cycle_time, f_hour, base)
                 idx_resp = client.get(idx_url)
                 if idx_resp.status_code != 200:
                     raise GfsFetchError(f"Cycle {cycle_time.isoformat()} .idx unavailable at {base} (HTTP {idx_resp.status_code})")
@@ -326,11 +327,13 @@ def _build_surface_tensor(cycles_surface: List[Dict[str, np.ndarray]], H: int, W
 class HarmonizedLiveInput:
     surface: np.ndarray          # (6, 9, 33, 25) physical units, matching SINGLE_VARS
     pressure: np.ndarray         # (6, 5, 6, 33, 25) physical units, matching PRESSURE_VARS x levels
-    t0: datetime                 # real GFS analysis time used as "now"
+    t0: datetime                 # EXACT wall-clock reference instant the forecast is issued for
+    analysis_t0: datetime        # real GFS f000 analysis time the newest input slot came from
+    analysis_cycles: List[datetime]  # the real f000 cycles actually fetched
     slot_timestamps: List[str]   # ISO-8601 timestamp of each of the 6 input slots
     slot_provenance: List[Dict]  # per-slot {"timestamp":..., "source": "analysis"|"interpolated", "bracket": [...]}
     fetched_at: datetime         # wall-clock time this harmonization completed
-    wallclock_age_hours: float   # how far behind wall-clock the t0 analysis is
+    wallclock_age_hours: float   # how far behind wall-clock the analysis_t0 state is
 
 
 # Module-level cache of the last successful harmonization, keyed implicitly by
@@ -338,109 +341,189 @@ class HarmonizedLiveInput:
 _HARMONIZED_CACHE: Optional[HarmonizedLiveInput] = None
 
 
-def fetch_and_harmonize(
-    lats: np.ndarray, lons: np.ndarray, use_cache: bool = True
-) -> HarmonizedLiveInput:
-    """Full Part-A pipeline: find the latest GFS cycle, fetch it plus the 3
-    preceding real analysis cycles, regrid each to the WB domain, and linearly
-    interpolate onto the 6 hourly input slots the model expects. Raises
-    GfsFetchError if anything required is unavailable.
+def _cycles_available_at(wallclock: datetime, production_lag_hours: float) -> List[datetime]:
+    """Every GFS cycle time that would GENUINELY have been published by
+    `wallclock`, newest first.
 
-    Cached by GFS cycle: because GFS only publishes a new analysis every 6 hours,
-    a 5-minute UI refresh must NOT re-download ~96 GRIB messages each tick. If the
-    latest published cycle is unchanged from the cached one, the cached
-    harmonization is returned as-is.
+    A cycle nominally at 12Z is not on the wire at 12:00Z -- NCEP needs time to
+    run and disseminate it. `production_lag_hours` is that publication latency:
+    a cycle C is only considered available once wallclock >= C + lag. This is
+    what makes the historical backtest honest (no future cycle can ever be
+    selected) and is the same rule the live path uses, so backtest and
+    production select cycles identically.
+    """
+    newest_boundary = wallclock.replace(minute=0, second=0, microsecond=0)
+    newest_boundary -= timedelta(hours=newest_boundary.hour % 6)
+    out: List[datetime] = []
+    c = newest_boundary
+    # Walk back until we have a generous span of candidates; callers take what
+    # they need from the front of this list.
+    for _ in range(12):
+        if c + timedelta(hours=production_lag_hours) <= wallclock:
+            out.append(c)
+        c -= timedelta(hours=6)
+    return out
+
+
+# Typical NCEP GFS publication latency. Measured against the live feed: a cycle
+# is routinely not fully on the wire until ~3.5-5h after its nominal hour. Used
+# as the availability rule for BOTH live selection and the historical backtest so
+# neither can ever consume a cycle that did not yet exist.
+GFS_PRODUCTION_LAG_HOURS = 5.0
+
+
+def _interpolate_slot(
+    older: GfsCycle, newer: GfsCycle, when: datetime
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict[int, np.ndarray]], float]:
+    """Linear time-interpolation of two REAL f000 analyses onto one hourly slot.
+
+    Returns (surface_dict, pressure_dict, weight_on_newer). When `when` coincides
+    with one of the two analyses the weight collapses to 0 or 1 and the returned
+    fields are that real analysis, unmodified.
+    """
+    span = (newer.cycle_time - older.cycle_time).total_seconds()
+    if span <= 0:
+        raise GfsFetchError(
+            f"Bracketing analyses are not ordered: {older.cycle_time} -> {newer.cycle_time}"
+        )
+    w_new = (when - older.cycle_time).total_seconds() / span
+    w_new = float(np.clip(w_new, 0.0, 1.0))
+    w_old = 1.0 - w_new
+
+    surf = {k: older.surface[k] * w_old + newer.surface[k] * w_new for k in SINGLE_VARS}
+    pres: Dict[str, Dict[int, np.ndarray]] = {}
+    for k in PRESSURE_VARS:
+        pres[k] = {}
+        for lvl in older.pressure.get(k, {}):
+            if lvl in newer.pressure.get(k, {}):
+                pres[k][lvl] = older.pressure[k][lvl] * w_old + newer.pressure[k][lvl] * w_new
+    return surf, pres, w_new
+
+
+def fetch_and_harmonize(
+    lats: np.ndarray,
+    lons: np.ndarray,
+    target_t0: datetime,
+    use_cache: bool = True,
+    production_lag_hours: float = GFS_PRODUCTION_LAG_HOURS,
+) -> HarmonizedLiveInput:
+    """Build the model's 6-slot hourly input ending at the newest REAL GFS f000
+    analysis available at `target_t0`, using analyses ONLY.
+
+    TEMPORAL CONTRACT (non-negotiable, see module docstring):
+      * Only f000 messages are ever fetched. GFS forecast hours f001+ are future
+        forecast steps, NOT observed history; feeding them into the model's
+        supposed observed-past input would leak forecast information into the
+        input the model was trained to read as analysis. This function must
+        never request a non-zero forecast hour.
+      * No cycle newer than what `production_lag_hours` says was actually
+        published by `target_t0` is ever considered -- so a historical backtest
+        run at a simulated past `target_t0` selects exactly the cycle an
+        operator would have had at that moment.
+
+    The six slots are hourly (t-5h..t0) RELATIVE TO THE ANALYSIS TIME, linearly
+    interpolated between the two most recent real analyses. `analysis_t0` is that
+    real analysis time; `t0` is the caller's exact wall-clock reference instant.
+    These are deliberately distinct: the forecast is ISSUED for the wall-clock
+    instant, but the atmospheric STATE it reads is as of the latest published
+    analysis, which lags wall-clock by the production lag. Callers must present
+    both rather than conflating them.
     """
     global _HARMONIZED_CACHE
     H, W = len(lats), len(lons)
 
-    with _http_client() as client:
-        t0 = _find_latest_cycle(client)
+    if target_t0.tzinfo is None:
+        target_t0 = target_t0.replace(tzinfo=timezone.utc)
 
-    if use_cache and _HARMONIZED_CACHE is not None and _HARMONIZED_CACHE.t0 == t0:
-        # Same GFS cycle as cached -> reuse the (identical) atmospheric data, but
-        # recompute the wall-clock-relative freshness fields so callers always see
-        # the true current age of this analysis rather than the age at fetch time.
-        now = datetime.now(timezone.utc)
-        cached = _HARMONIZED_CACHE
-        return HarmonizedLiveInput(
-            surface=cached.surface,
-            pressure=cached.pressure,
-            t0=cached.t0,
-            slot_timestamps=cached.slot_timestamps,
-            slot_provenance=cached.slot_provenance,
-            fetched_at=cached.fetched_at,
-            wallclock_age_hours=(now - cached.t0).total_seconds() / 3600.0,
+    candidates = _cycles_available_at(target_t0, production_lag_hours)
+    if len(candidates) < 2:
+        raise GfsFetchError(
+            f"Fewer than two GFS analysis cycles were published as of {target_t0.isoformat()} "
+            f"(production lag {production_lag_hours}h); cannot build the 6-hour input sequence."
         )
 
-    # Real analysis cycles only, 6h apart, never a forecast hour.
-    cycle_times = [t0 - timedelta(hours=18), t0 - timedelta(hours=12), t0 - timedelta(hours=6), t0]
-    cycles = [fetch_gfs_cycle(ct, lats, lons) for ct in cycle_times]
+    # Walk the candidate list until we find a NEWEST cycle that is actually
+    # fetchable, so a cycle that is late or partially disseminated degrades to
+    # the previous real one instead of failing the whole refresh.
+    newest: Optional[GfsCycle] = None
+    older: Optional[GfsCycle] = None
+    last_err: Optional[Exception] = None
+    for i in range(len(candidates) - 1):
+        try:
+            newest = fetch_gfs_slice(candidates[i], 0, lats, lons)
+            older = fetch_gfs_slice(candidates[i + 1], 0, lats, lons)
+            break
+        except (GfsFetchError, httpx.HTTPError) as e:
+            last_err = e
+            newest = older = None
+            continue
+    if newest is None or older is None:
+        raise GfsFetchError(
+            f"No pair of consecutive real GFS f000 analyses could be fetched as of "
+            f"{target_t0.isoformat()}: {last_err}"
+        )
 
-    t0_minus_6 = cycles[2]  # bracket start
-    t0_cycle = cycles[3]    # bracket end == t0 itself, no interpolation needed
+    analysis_t0 = newest.cycle_time
 
-    slot_offsets_h = [-5, -4, -3, -2, -1, 0]
-    slot_timestamps: List[str] = []
+    if use_cache and _HARMONIZED_CACHE is not None:
+        if (
+            _HARMONIZED_CACHE.analysis_t0 == analysis_t0
+            and _HARMONIZED_CACHE.surface.shape[-2:] == (H, W)
+        ):
+            # Same real analysis state; only the wall-clock reference moved on.
+            cached = _HARMONIZED_CACHE
+            return HarmonizedLiveInput(
+                surface=cached.surface,
+                pressure=cached.pressure,
+                t0=target_t0,
+                analysis_t0=cached.analysis_t0,
+                analysis_cycles=cached.analysis_cycles,
+                slot_timestamps=cached.slot_timestamps,
+                slot_provenance=cached.slot_provenance,
+                fetched_at=cached.fetched_at,
+                wallclock_age_hours=(target_t0 - cached.analysis_t0).total_seconds() / 3600.0,
+            )
+
+    # Six hourly slots ending exactly at the real analysis time.
+    slot_times = [analysis_t0 - timedelta(hours=h) for h in range(5, -1, -1)]
+
+    out_surface: List[Dict[str, np.ndarray]] = []
+    out_pressure: List[Dict[str, Dict[int, np.ndarray]]] = []
     slot_provenance: List[Dict] = []
 
-    surface_slots: List[Dict[str, np.ndarray]] = []
-    pressure_slots: List[Dict[str, Dict[int, np.ndarray]]] = []
-
-    for offset in slot_offsets_h:
-        slot_time = t0 + timedelta(hours=offset)
-        slot_timestamps.append(slot_time.isoformat())
-        if offset == 0:
-            surface_slots.append(t0_cycle.surface)
-            pressure_slots.append(t0_cycle.pressure)
-            slot_provenance.append({
-                "timestamp": slot_time.isoformat(),
-                "source": "analysis",
-                "cycle": t0_cycle.cycle_time.isoformat(),
-            })
-            continue
-
-        # weight for linear interpolation between t0-6h (w=0) and t0 (w=1)
-        frac = (slot_time - t0_minus_6.cycle_time).total_seconds() / (
-            t0_cycle.cycle_time - t0_minus_6.cycle_time
-        ).total_seconds()
-
-        surf_interp = {
-            v: (1 - frac) * t0_minus_6.surface[v] + frac * t0_cycle.surface[v]
-            for v in SINGLE_VARS
-        }
-        pres_interp: Dict[str, Dict[int, np.ndarray]] = {}
-        for var in PRESSURE_VARS:
-            pres_interp[var] = {}
-            levels = WIND_LEVELS_HPA if var in ("u", "v") else THERMO_LEVELS_HPA
-            for lvl in levels:
-                a = t0_minus_6.pressure[var][lvl]
-                b = t0_cycle.pressure[var][lvl]
-                pres_interp[var][lvl] = (1 - frac) * a + frac * b
-
-        surface_slots.append(surf_interp)
-        pressure_slots.append(pres_interp)
+    for st in slot_times:
+        surf, pres, w_new = _interpolate_slot(older, newest, st)
+        out_surface.append(surf)
+        out_pressure.append(pres)
+        is_real = abs(w_new - 1.0) < 1e-9 or abs(w_new) < 1e-9
         slot_provenance.append({
-            "timestamp": slot_time.isoformat(),
-            "source": "interpolated",
-            "bracket": [t0_minus_6.cycle_time.isoformat(), t0_cycle.cycle_time.isoformat()],
-            "interp_fraction": round(frac, 4),
+            "timestamp": st.isoformat(),
+            "source": "analysis" if is_real else "interpolated",
+            "forecast_hour_used": 0,
+            "bracket": [older.cycle_time.isoformat(), newest.cycle_time.isoformat()],
+            "weight_on_newer_analysis": round(w_new, 4),
+            "note": (
+                "Real GFS f000 analysis, used unmodified."
+                if is_real
+                else "Linear time-interpolation between two real GFS f000 analyses. "
+                     "No forecast hour is used as an input timestep."
+            ),
         })
 
-    surface = _build_surface_tensor(surface_slots, H, W)
-    pressure = _build_pressure_tensor(pressure_slots, H, W)
+    surf_tensor = _build_surface_tensor(out_surface, H, W)
+    pres_tensor = _build_pressure_tensor(out_pressure, H, W)
 
-    fetched_at = datetime.now(timezone.utc)
-    wallclock_age_hours = (fetched_at - t0).total_seconds() / 3600.0
-
-    harmonized = HarmonizedLiveInput(
-        surface=surface,
-        pressure=pressure,
-        t0=t0,
-        slot_timestamps=slot_timestamps,
+    res = HarmonizedLiveInput(
+        surface=surf_tensor,
+        pressure=pres_tensor,
+        t0=target_t0,
+        analysis_t0=analysis_t0,
+        analysis_cycles=[newest.cycle_time, older.cycle_time],
+        slot_timestamps=[st.isoformat() for st in slot_times],
         slot_provenance=slot_provenance,
-        fetched_at=fetched_at,
-        wallclock_age_hours=wallclock_age_hours,
+        fetched_at=datetime.now(timezone.utc),
+        wallclock_age_hours=(target_t0 - analysis_t0).total_seconds() / 3600.0,
     )
-    _HARMONIZED_CACHE = harmonized
-    return harmonized
+
+    _HARMONIZED_CACHE = res
+    return res

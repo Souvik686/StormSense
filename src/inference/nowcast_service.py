@@ -1,6 +1,6 @@
 """Nowcast Service: Manages real-time and operational inference,
 spatial district risk aggregation, GeoJSON generation, and thermodynamic
-diagnostics for the SevereWeatherNet V2 nowcasting engine.
+diagnostics for the StormSense V2 nowcasting engine.
 """
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ from src.inference.predictor import get_predictor, NowcastPredictor
 from src.inference.risk_map import predictions_to_geojson
 from src.inference.risk_surface import (
     generate_risk_surface_png,
+    generate_analysis_surface_png,
+    HISTORICAL_RAIN_RENDER_MAX_MM_H,
     get_or_create_wb_mask,
     WB_BOUNDS_LEAFLET,
     WB_MIN_LAT,
@@ -35,6 +37,40 @@ from src.utils.config import load_config, Config
 
 _SERVICE_LOCK = threading.Lock()
 _SERVICE_INSTANCE: Optional[NowcastService] = None
+
+# The single place the live pipeline's honest caveats are written. Exposed
+# verbatim by /api/nowcast/summary and /api/live/ml-status so the API can never
+# describe the pipeline more favourably in one endpoint than another.
+# ---------------------------------------------------------------------------
+# Historical case study identity -- THE single source of truth.
+#
+# Every label, API field and UI string describing the case study derives from
+# these constants. Duplicating the event name as literals across backend and
+# frontend is how the codebase previously ended up serving Cyclone Remal data
+# under a "Kalbaishakhi" label in some places and the correct name in others.
+#
+# HISTORICAL_ANALYSIS_TIME is the authoritative t=0. All historical horizons are
+# computed as offsets from it, never from wall-clock time.
+# ---------------------------------------------------------------------------
+HISTORICAL_EVENT_NAME = "Cyclone Remal"
+HISTORICAL_EVENT_DETAIL = "Cyclone Remal (Landfall Approach)"
+HISTORICAL_ANALYSIS_TIME = "2024-05-26T12:00:00Z"
+HISTORICAL_ANALYSIS_SOURCE = "ERA5 reanalysis (observed atmospheric analysis)"
+
+LIVE_KNOWN_LIMITATIONS = [
+    "The six input timesteps come from real GFS f000 analyses only. GFS publishes "
+    "analyses every 6 hours, so the hourly slots between two analyses are "
+    "linearly time-interpolated; sub-6-hour atmospheric transients are smoothed. "
+    "No GFS forecast hour is ever used as an input timestep.",
+    "Because GFS analyses are published with a production lag, the atmospheric "
+    "state the model reads is as of the latest published analysis, which is "
+    "typically several hours behind the wall-clock instant the forecast is "
+    "issued for. Both times are reported separately and must not be conflated.",
+    "GFS (NCEP) is a different NWP system from the ERA5 reanalysis (ECMWF) the "
+    "model was trained on. This is a genuine distribution shift, so live "
+    "probabilities are directionally informative and are not as well calibrated "
+    "as the historical backtested metrics.",
+]
 
 
 def compute_valid_time(issue_time_str: Optional[str], lead_hours: int) -> str:
@@ -124,9 +160,20 @@ class NowcastService:
 
         # 4. Initialize Operational Reference Window & Run Initial Nowcast
         self.current_pred: Optional[Dict[str, Any]] = None
-        self.current_valid_time: str = "2024-05-05T15:00:00Z"
+        self.current_valid_time: str = HISTORICAL_ANALYSIS_TIME
         self.current_thermo: Dict[str, Any] = {}
+        # Denormalized ERA5 t0 surface state for the historical case study.
+        # Initialized to None BEFORE _init_operational_state() so that a cache
+        # load failure leaves a well-defined "no data" value rather than an
+        # undefined attribute: get_summary() reads it directly and would
+        # otherwise raise AttributeError instead of degrading to None.
+        self.era5_surface_t0: Optional[Dict[str, np.ndarray]] = None
         self.risk_surface_png_cache: Dict[int, bytes] = {}
+        # Rendered historical t=0 analysis surfaces, keyed by variable.
+        self._historical_analysis_png_cache: Dict[str, bytes] = {}
+        # Populated by _init_operational_state() when the case study cannot be
+        # loaded; surfaced by the API instead of a silent substitution.
+        self.historical_init_error: Optional[str] = None
         self._init_operational_state()
 
         # 5. Live (GFS-driven) operational state -- see src/inference/gfs_live.py
@@ -134,8 +181,22 @@ class NowcastService:
         # None until the first successful fetch. A failed refresh NEVER clears an
         # existing live_pred (stale-data protection) -- it only records the error.
         self.live_pred: Optional[Dict[str, Any]] = None
-        self.live_valid_time: Optional[str] = None          # real GFS t0 analysis time
+        # THE authoritative reference instant the live forecast is issued for:
+        # exact wall-clock, never floored to an hour. +2/+4/+6 are computed from
+        # this and from nothing else, so the API and the browser agree exactly.
+        self.live_reference_time: Optional[str] = None
+        # The real GFS f000 analysis time the atmospheric input state came from.
+        # Deliberately DISTINCT from live_reference_time -- see gfs_live.py.
+        self.live_analysis_time: Optional[str] = None
+        self.live_analysis_cycles: Optional[List[str]] = None
         self.live_slot_provenance: Optional[List[Dict[str, Any]]] = None
+        # Real t0 atmospheric state in physical units (see _denormalize_live_surface).
+        self.live_surface_state: Optional[Dict[str, np.ndarray]] = None
+        # Thermodynamic diagnostics derived from the LIVE GFS analysis only.
+        # Kept strictly separate from `current_thermo`, which is the frozen
+        # historical (ERA5) case-study state -- mixing them would report
+        # historical soundings as live.
+        self.live_thermo: Optional[Dict[str, Any]] = None
         self.live_fetch_error: Optional[str] = None
         self.live_fetched_at: Optional[str] = None           # wall-clock time of last successful refresh
         self.live_risk_surface_png_cache: Dict[int, bytes] = {}
@@ -170,9 +231,29 @@ class NowcastService:
             try:
                 from src.data.dataset_v2 import make_dataloaders_v2
                 loaders = make_dataloaders_v2(cache_path, self.cfg)
-                # Sample 100: Active Kalbaishakhi pre-monsoon convective squall in 2024 test split
+                import numpy as np
+                # Historical Case Study: Cyclone Remal (May 26, 2024, 12:00 UTC)
                 dataset = loaders["test"].dataset
-                sample_idx = min(100, len(dataset) - 1)
+                # The case study is a specific real event. If its analysis time
+                # is not in the held-out split we must FAIL, not silently serve a
+                # different date under the Remal label -- a silent fallback to
+                # "sample 100" is exactly how this app previously displayed one
+                # event's data beneath another event's name.
+                target_time = np.datetime64(
+                    HISTORICAL_ANALYSIS_TIME.replace("Z", "").replace("+00:00", "")
+                )
+                sample_idx = None
+                for i, w in enumerate(dataset.windows):
+                    if dataset.times[w.input_end_idx] == target_time:
+                        sample_idx = i
+                        break
+                if sample_idx is None:
+                    raise RuntimeError(
+                        f"Historical case study unavailable: {HISTORICAL_EVENT_NAME} "
+                        f"analysis time {HISTORICAL_ANALYSIS_TIME} was not found in "
+                        f"the reanalysis cache ({len(dataset.windows)} windows "
+                        f"searched). Refusing to substitute a different event."
+                    )
                 sample = dataset[sample_idx]
                 
                 vt = sample.get("valid_time")
@@ -278,8 +359,19 @@ class NowcastService:
                 rh_pct = np.clip(100.0 * (vp / svp), 0.0, 100.0)
                 sp_pa = surf[-1, 4] * self.stats["sp"]["std"] + self.stats["sp"]["mean"]
                 pres_hpa = sp_pa / 100.0
-                tp_m = surf[-1, 8] * self.stats["tp"]["std"] + self.stats["tp"]["mean"]
-                rain_mm = np.clip(tp_m * 1000.0, 0.0, 150.0)
+                # ERA5 `tp` is ALREADY in mm/hour in this cache: src/data/era5_loader.py
+                # converts the raw ECMWF meters/hour to mm/hour (`ds["tp"] * 1000.0`,
+                # units attr set to "mm") before the memmap is written, and the
+                # normalization stats confirm it (mean 0.371, std 0.974 -- meters
+                # would be ~3.7e-4). Multiplying by 1000 again here overflowed every
+                # cell past the 150 mm clip ceiling, so 100% of the historical grid
+                # reported a constant 150.0 mm instead of the real field. Denormalize
+                # only; do not re-scale.
+                tp_mm_h = surf[-1, SINGLE_VARS.index("tp")] * self.stats["tp"]["std"] + self.stats["tp"]["mean"]
+                # Clip negatives only: z-score denormalization of a non-negative
+                # accumulation can undershoot below 0, which is not physical. No
+                # upper clip -- a real extreme must be allowed to read as extreme.
+                rain_mm = np.clip(tp_mm_h, 0.0, None)
 
                 self.era5_surface_t0 = {
                     "temp_c": temp_c.astype(np.float32),
@@ -288,6 +380,46 @@ class NowcastService:
                     "pres_hpa": pres_hpa.astype(np.float32),
                     "rain_mm": rain_mm.astype(np.float32),
                 }
+
+                # Observed surface state at the case study's FORECAST HORIZONS.
+                # Remal is a past event, so the atmosphere at t0+2/+4/+6h was
+                # actually observed and is present in the same reanalysis cache.
+                # These are verification observations (what really happened), NOT
+                # model predictions -- the model has no temperature/humidity/wind
+                # head -- so the API labels them as observed analyses and the UI
+                # must never present them as StormSense forecast output.
+                self.era5_surface_by_lead = {}
+                try:
+                    times = dataset.times
+                    for lead_h in (2, 3, 4, 5, 6):
+                        want = target_time + np.timedelta64(lead_h, "h")
+                        idx = None
+                        for k, w in enumerate(dataset.windows):
+                            if times[w.input_end_idx] == want:
+                                idx = k
+                                break
+                        if idx is None:
+                            continue
+                        s = dataset[idx]
+                        sf = s["surface"].numpy() if hasattr(s["surface"], "numpy") else np.asarray(s["surface"])
+                        u = sf[-1, SINGLE_VARS.index("u10")] * self.stats["u10"]["std"] + self.stats["u10"]["mean"]
+                        v = sf[-1, SINGLE_VARS.index("v10")] * self.stats["v10"]["std"] + self.stats["v10"]["mean"]
+                        t_k = sf[-1, SINGLE_VARS.index("t2m")] * self.stats["t2m"]["std"] + self.stats["t2m"]["mean"]
+                        d_k = sf[-1, SINGLE_VARS.index("d2m")] * self.stats["d2m"]["std"] + self.stats["d2m"]["mean"]
+                        sp_p = sf[-1, SINGLE_VARS.index("sp")] * self.stats["sp"]["std"] + self.stats["sp"]["mean"]
+                        t_c = t_k - 273.15
+                        dw_c = d_k - 273.15
+                        _vp = 6.112 * np.exp((17.67 * dw_c) / (dw_c + 243.5))
+                        _svp = 6.112 * np.exp((17.67 * t_c) / (t_c + 243.5))
+                        self.era5_surface_by_lead[lead_h] = {
+                            "temp_c": t_c.astype(np.float32),
+                            "rh_pct": np.clip(100.0 * (_vp / _svp), 0.0, 100.0).astype(np.float32),
+                            "wind_kmh": (np.sqrt(u ** 2 + v ** 2) * 3.6).astype(np.float32),
+                            "pres_hpa": (sp_p / 100.0).astype(np.float32),
+                            "valid_time": str(times[dataset.windows[idx].input_end_idx])[:19] + "Z",
+                        }
+                except Exception as e:
+                    print(f"[NowcastService] Historical horizon surface states unavailable: {e}")
 
                 # Precompute continuous West Bengal risk surface PNGs for sub-millisecond API response
                 try:
@@ -300,11 +432,17 @@ class NowcastService:
                 except Exception as e:
                     print(f"[NowcastService] Warning: Could not precompute risk surface PNGs: {e}")
 
-                print(f"[NowcastService] Historical (2024-05-05) operational state loaded. Valid time: {self.current_valid_time}")
+                print(f"[NowcastService] Historical ({HISTORICAL_EVENT_NAME}) operational state loaded. Valid time: {self.current_valid_time}")
             except Exception as e:
-                print(f"[NowcastService] Warning: Could not initialize operational cache: {e}")
+                # Record WHY the historical state is missing so the API can
+                # report a real reason instead of an empty case study. The
+                # service still starts (live mode is independent), but every
+                # historical endpoint will surface this error rather than
+                # silently serving a different event or fabricated values.
+                self.historical_init_error = str(e)
+                print(f"[NowcastService] ERROR: Historical case study unavailable: {e}")
 
-    def refresh_live_state(self) -> bool:
+    def refresh_live_state(self, target_t0=None) -> bool:
         """Fetch the latest real GFS analysis, harmonize it into the model's
         input format (src/inference/gfs_live.py), and run genuine inference.
 
@@ -315,7 +453,10 @@ class NowcastService:
         on success, False on failure.
         """
         try:
-            harmonized = gfs_live.fetch_and_harmonize(self.lats, self.lons)
+            from datetime import datetime, timezone
+            if target_t0 is None:
+                target_t0 = datetime.now(timezone.utc)
+            harmonized = gfs_live.fetch_and_harmonize(self.lats, self.lons, target_t0=target_t0)
 
             # NowcastPredictor.predict() performs normalization + derived-feature
             # construction (wind speed, dewpoint depression, temporal encodings,
@@ -346,7 +487,20 @@ class NowcastService:
                 "lats": self.lats,
                 "lons": self.lons,
             }
-            self.live_valid_time = harmonized.t0.isoformat()
+            # The forecast is ISSUED FOR the exact wall-clock reference instant
+            # (never floored). The atmospheric state it read is as of the GFS
+            # analysis time. Both are recorded; +2/+4/+6 derive from the former.
+            # Keep the REAL t0 atmospheric state (physical units, straight from
+            # the GFS analysis) so attribution and point queries can report
+            # genuine values instead of placeholders.
+            self.live_surface_state = self._denormalize_live_surface(harmonized.surface)
+            self.live_thermo = self._compute_live_thermo(
+                self.live_surface_state, harmonized.pressure, harmonized.analysis_t0
+            )
+
+            self.live_reference_time = harmonized.t0.isoformat()
+            self.live_analysis_time = harmonized.analysis_t0.isoformat()
+            self.live_analysis_cycles = [c.isoformat() for c in harmonized.analysis_cycles]
             self.live_slot_provenance = harmonized.slot_provenance
             self.live_fetch_error = None
             self.live_fetched_at = harmonized.fetched_at.isoformat()
@@ -361,13 +515,147 @@ class NowcastService:
             except Exception as e:
                 print(f"[NowcastService] Warning: Could not regenerate live risk surface PNGs: {e}")
 
-            print(f"[NowcastService] Live state refreshed. GFS analysis t0={self.live_valid_time}, "
-                  f"wallclock_age={harmonized.wallclock_age_hours:.1f}h")
+            print(f"[NowcastService] Live state refreshed. Reference (wall-clock) t0="
+                  f"{self.live_reference_time}, GFS analysis={self.live_analysis_time}, "
+                  f"analysis lag={harmonized.wallclock_age_hours:.1f}h")
             return True
         except Exception as e:
             self.live_fetch_error = str(e)
             print(f"[NowcastService] Live refresh FAILED (live_pred left untouched): {e}")
             return False
+
+    def _denormalize_live_surface(self, surface: np.ndarray) -> Dict[str, np.ndarray]:
+        """Extract the real t0 surface state in physical units from the live GFS
+        input tensor.
+
+        `surface` is (T, len(SINGLE_VARS), H, W) in PHYSICAL units already (the
+        GFS harmonizer emits physical units; normalization happens later inside
+        the predictor), so this is an extraction plus standard derivations --
+        no unit guessing.
+        """
+        t0 = surface[-1]  # newest slot = the real analysis
+        idx = {v: SINGLE_VARS.index(v) for v in SINGLE_VARS}
+
+        u10 = t0[idx["u10"]]
+        v10 = t0[idx["v10"]]
+        t2m_k = t0[idx["t2m"]]
+        d2m_k = t0[idx["d2m"]]
+
+        temp_c = t2m_k - 273.15
+        dew_c = d2m_k - 273.15
+        # Magnus formula, same form used for the historical ERA5 state.
+        vp = 6.112 * np.exp((17.67 * dew_c) / (dew_c + 243.5))
+        svp = 6.112 * np.exp((17.67 * temp_c) / (temp_c + 243.5))
+        rh = np.clip(100.0 * (vp / svp), 0.0, 100.0)
+
+        return {
+            "temp_c": temp_c.astype(np.float32),
+            "dewpoint_c": dew_c.astype(np.float32),
+            "rh_pct": rh.astype(np.float32),
+            "wind_kmh": (np.sqrt(u10 ** 2 + v10 ** 2) * 3.6).astype(np.float32),
+            "pres_hpa": (t0[idx["sp"]] / 100.0).astype(np.float32),
+            "cape_j_kg": np.maximum(0.0, t0[idx["cape"]]).astype(np.float32),
+            "cin_j_kg": np.maximum(0.0, t0[idx["cin"]]).astype(np.float32),
+            "tcwv_kg_m2": t0[idx["tcwv"]].astype(np.float32),
+            # tp is already mm/hour after harmonization (PRATE * 3600).
+            "rain_mm_h": np.clip(t0[idx["tp"]], 0.0, None).astype(np.float32),
+        }
+
+    def _compute_live_thermo(
+        self,
+        surface_state: Dict[str, np.ndarray],
+        pressure: np.ndarray,
+        analysis_t0,
+    ) -> Dict[str, Any]:
+        """Derive thermodynamic diagnostics from the REAL live GFS analysis.
+
+        Every value returned here comes from the live analysis that was just
+        ingested; nothing is borrowed from the historical ERA5 case study, and
+        nothing is zero-filled. A variable that is genuinely absent from the
+        live input is reported as None with a reason, never as 0 and never as a
+        placeholder number.
+
+        Vertical extent honesty: GFS live ingestion carries wind at 1000/850/700
+        hPa only (see gfs_live.WIND_LEVELS_HPA). 700 hPa is roughly 3 km, so the
+        shear computed here is a 1000->700 hPa bulk shear and is labelled as
+        such. It is NOT the 0-6 km bulk shear the historical ERA5 path reports,
+        and must never be presented as one.
+        """
+        # Domain centroid -- the same reference point the historical path uses,
+        # so live and historical diagnostics describe the same location.
+        lat_i = int(np.argmin(np.abs(self.lats - 22.724)))
+        lon_j = int(np.argmin(np.abs(self.lons - 88.479)))
+
+        def _point(field: Optional[np.ndarray]) -> Optional[float]:
+            """Read one grid point, rejecting NaN rather than coercing to zero."""
+            if field is None:
+                return None
+            val = float(field[lat_i, lon_j])
+            if not np.isfinite(val):
+                return None
+            return val
+
+        cape = _point(surface_state.get("cape_j_kg"))
+        cin = _point(surface_state.get("cin_j_kg"))
+        wind_kmh = _point(surface_state.get("wind_kmh"))
+
+        # Bulk shear between 1000 hPa and 700 hPa from the live pressure tensor.
+        # pressure is (n_cycles, n_vars, n_levels, H, W); take the newest slot.
+        shear_mps: Optional[float] = None
+        shear_note = None
+        try:
+            u_i = PRESSURE_VARS.index("u")
+            v_i = PRESSURE_VARS.index("v")
+            lvl_1000 = gfs_live.PRESSURE_LEVELS_HPA.index(1000)
+            lvl_700 = gfs_live.PRESSURE_LEVELS_HPA.index(700)
+
+            u_lo = float(pressure[-1, u_i, lvl_1000, lat_i, lon_j])
+            v_lo = float(pressure[-1, v_i, lvl_1000, lat_i, lon_j])
+            u_hi = float(pressure[-1, u_i, lvl_700, lat_i, lon_j])
+            v_hi = float(pressure[-1, v_i, lvl_700, lat_i, lon_j])
+
+            if all(np.isfinite(x) for x in (u_lo, v_lo, u_hi, v_hi)):
+                shear_mps = float(
+                    round(float(np.hypot(u_hi - u_lo, v_hi - v_lo)), 1)
+                )
+            else:
+                shear_note = "Wind levels missing from the live analysis."
+        except (ValueError, IndexError) as e:
+            shear_note = f"Shear levels unavailable in live input: {e}"
+
+        return {
+            "source": "live_gfs_analysis",
+            "analysis_time_utc": analysis_t0.isoformat() if analysis_t0 else None,
+            "reference_point": {"lat": float(self.lats[lat_i]), "lon": float(self.lons[lon_j])},
+            "cape_j_kg": round(cape, 1) if cape is not None else None,
+            "cin_j_kg": round(cin, 1) if cin is not None else None,
+            # Named for what it physically is, not for what the historical path
+            # reports. The frontend prints this label verbatim.
+            "bulk_shear_1000_700hpa_mps": shear_mps,
+            "bulk_shear_label": "1000–700 hPa bulk shear (~0–3 km)",
+            "bulk_shear_note": shear_note,
+            "surface_wind_kmh": round(wind_kmh, 1) if wind_kmh is not None else None,
+            "surface_wind_source": "GFS 10 m wind (u10/v10) from the live analysis",
+            # 0-6 km shear needs winds above 700 hPa, which live GFS ingestion
+            # does not carry. Stated explicitly so the UI cannot imply otherwise.
+            "bulk_shear_0_6km_mps": None,
+            "bulk_shear_0_6km_status": (
+                "Not computed: live GFS ingestion carries wind at 1000/850/700 hPa "
+                "only, so winds near 6 km are not available."
+            ),
+            "lifted_index": {
+                "value": None,
+                "status": "Not available from the live GFS single-level fields.",
+            },
+        }
+
+    @property
+    def live_valid_time(self) -> Optional[str]:
+        """The instant the live forecast is issued for: exact wall-clock, not
+        floored, and not the GFS cycle hour. Retained under the original name so
+        existing callers keep working, but it now unambiguously means the
+        reference time -- `live_analysis_time` is the GFS analysis state."""
+        return self.live_reference_time
 
     def _get_static_dem_meters(self) -> np.ndarray:
         """Return the static SRTM DEM in raw meters (not normalized), the same
@@ -436,13 +724,22 @@ class NowcastService:
                     "Live forecast unavailable: "
                     + (self.live_fetch_error or "operational atmospheric input has not been ingested yet.")
                 )
-            raise RuntimeError("ML model has not generated a prediction.")
+            raise RuntimeError(
+                "Historical case study unavailable: "
+                + (self.historical_init_error or "no prediction has been generated.")
+            )
         return pred
 
     def _issue_time_for_mode(self, mode: Optional[str]) -> str:
+        """The authoritative reference instant that +2/+4/+6 are measured from.
+
+        Live: the exact wall-clock instant the current live state was issued for
+        (never floored to an hour, never the GFS cycle hour). Historical: the
+        case study's own analysis time. Every horizon in every endpoint derives
+        from this one value, so the API and the browser can never disagree."""
         m = self._resolve_mode(mode)
         if m == "live":
-            return self.live_valid_time or "Unknown"
+            return self.live_reference_time or "Unknown"
         return self.current_valid_time
 
     # Operational analyses publish every 6h, and production lag means the newest
@@ -459,10 +756,13 @@ class NowcastService:
         the refresh has not succeeded. Callers surface this as a 'stale' badge
         rather than silently presenting old data as current."""
         max_age_hours = self.LIVE_STALE_AFTER_HOURS if max_age_hours is None else max_age_hours
-        if self.live_pred is None or self.live_valid_time is None:
+        if self.live_pred is None or self.live_analysis_time is None:
             return True
         try:
-            t0 = datetime.fromisoformat(self.live_valid_time)
+            # Staleness is a property of the ATMOSPHERIC STATE, so it is measured
+            # against the GFS analysis time. Measuring it against the reference
+            # time would be meaningless -- that is always "now" by construction.
+            t0 = datetime.fromisoformat(self.live_analysis_time)
             if t0.tzinfo is None:
                 t0 = t0.replace(tzinfo=timezone.utc)
             return (datetime.now(timezone.utc) - t0).total_seconds() / 3600.0 > max_age_hours
@@ -471,10 +771,33 @@ class NowcastService:
 
     def get_live_status(self) -> Dict[str, Any]:
         """Machine-readable live-pipeline health for the API/UI freshness logic."""
+        analysis_lag_h = None
+        if self.live_analysis_time and self.live_reference_time:
+            try:
+                analysis_lag_h = round(
+                    (
+                        datetime.fromisoformat(self.live_reference_time)
+                        - datetime.fromisoformat(self.live_analysis_time)
+                    ).total_seconds()
+                    / 3600.0,
+                    2,
+                )
+            except Exception:
+                analysis_lag_h = None
         return {
             "available": self.live_pred is not None,
-            "issue_time": self.live_valid_time,
-            "issue_time_formatted": format_iso_time(self.live_valid_time),
+            # Instant the forecast is issued for (exact wall-clock).
+            "issue_time": self.live_reference_time,
+            "issue_time_formatted": format_iso_time(self.live_reference_time),
+            "reference_time": self.live_reference_time,
+            # Real GFS f000 analysis the input state came from -- a DIFFERENT
+            # thing, and never presented as the issue time.
+            "analysis_time": self.live_analysis_time,
+            "analysis_time_formatted": format_iso_time(self.live_analysis_time),
+            "analysis_cycles": self.live_analysis_cycles,
+            "analysis_lag_hours": analysis_lag_h,
+            "input_source": "NOAA GFS f000 analyses (0.25°), time-interpolated to hourly slots",
+            "uses_forecast_hours_as_input": False,
             "last_refreshed": self.live_fetched_at,
             "is_stale": self.is_live_stale(),
             "error": self.live_fetch_error,
@@ -583,9 +906,68 @@ class NowcastService:
                 "rainfall_mm": float(round(float(self.era5_surface_t0["rain_mm"][ci, cj]), 1)),
             }
 
+        # Observed surface state at the SELECTED horizon of the case study. Remal
+        # is a past event, so these conditions were actually measured; they are
+        # verification observations, never model output (the network predicts only
+        # severe-weather probability and rainfall). Labelled so the UI can say so.
+        surface_obs_at_lead = None
+        by_lead = getattr(self, "era5_surface_by_lead", None)
+        if resolved_mode == "historical" and by_lead:
+            state_l = by_lead.get(int(lead_hours)) if lead_hours else None
+            if state_l is not None:
+                if cells:
+                    ci, cj = cells[0]
+                else:
+                    ci, cj = 11, 18
+                surface_obs_at_lead = {
+                    "source": "ERA5 reanalysis (observed atmospheric analysis)",
+                    "is_observation": True,
+                    "is_model_output": False,
+                    "lead_hours": int(lead_hours),
+                    "valid_time": state_l["valid_time"],
+                    "temperature_c": float(round(float(state_l["temp_c"][ci, cj]), 1)),
+                    "humidity_pct": int(round(float(state_l["rh_pct"][ci, cj]))),
+                    "wind_speed_kmh": float(round(float(state_l["wind_kmh"][ci, cj]), 1)),
+                    "pressure_hpa": float(round(float(state_l["pres_hpa"][ci, cj]), 1)),
+                }
+
         forecast_vt = compute_valid_time(issue_time, lead_hours)
         return {
-            "model_version": "SevereWeatherNet V2 Calibrated",
+            "model": "StormSense AI Forecast",
+            # The analysis the input state came from -- NOT the issue time, and
+            # MODE-SPECIFIC. These were previously read unconditionally from the
+            # LIVE pipeline, so historical mode reported the current GFS cycle
+            # (e.g. "11 Sep 2026 18:00 UTC") as the Cyclone Remal case study's
+            # input analysis, next to a correct 2024-05-26 valid time. That is a
+            # live-state leak into a frozen historical replay, not a display bug.
+            #
+            # Historical: the case study's own reanalysis analysis time.
+            # Live: the real GFS f000 analysis time.
+            "analysis_time": (
+                format_iso_time(self.live_analysis_time)
+                if resolved_mode == "live" and self.live_analysis_time
+                else (format_iso_time(self.current_valid_time)
+                      if resolved_mode == "historical" else None)
+            ),
+            "analysis_time_iso": (
+                self.live_analysis_time if resolved_mode == "live"
+                else self.current_valid_time
+            ),
+            "analysis_source": (
+                "NOAA GFS 0.25° f000 analysis" if resolved_mode == "live"
+                else HISTORICAL_ANALYSIS_SOURCE
+            ),
+            # Freshness describes the LIVE ingestion pipeline only. A frozen case
+            # study is never "stale" and has no refresh cycle; reporting live
+            # freshness beside 2024 data is meaningless and misleading.
+            "last_refreshed": self.live_fetched_at if resolved_mode == "live" else None,
+            "is_stale": self.is_live_stale() if resolved_mode == "live" else False,
+            "input_slot_provenance": (
+                self.live_slot_provenance if resolved_mode == "live" else None
+            ),
+            "temporal_requirement": "6 consecutive hourly timesteps (t-5h to t0)",
+            "spatial_requirement": "33x25 grid at 0.25 degree resolution (20-28N, 84-90E)",
+            "known_limitations": LIVE_KNOWN_LIMITATIONS,
             "parameters": self.predictor.model.count_parameters(),
             "mode": resolved_mode,
             "valid_time": issue_time,
@@ -596,7 +978,11 @@ class NowcastService:
             "operational_mode": (
                 "Live Operational Nowcast"
                 if resolved_mode == "live"
-                else "Historical Case Study / Demonstration Mode (Kalbaishakhi Pre-Monsoon Event)"
+                # Must name the event actually loaded by _init_operational_state(),
+                # which searches for 2024-05-26T12:00:00 (Cyclone Remal). The old
+                # "Kalbaishakhi" label described a different case study and
+                # mislabelled the data being served.
+                else f"Historical Case Study / Demonstration Mode ({HISTORICAL_EVENT_DETAIL})"
             ),
             "live_status": self.get_live_status() if resolved_mode == "live" else None,
             "active_high_risk_district": self.get_active_high_risk_district(
@@ -606,6 +992,7 @@ class NowcastService:
             "selected_lead_hours": lead_hours,
             "lead_hours": lead_hours,
             "surface_obs_t0": surface_obs_t0,
+            "surface_obs_at_lead": surface_obs_at_lead,
             "dem_metadata": {
                 "source": "SRTM 30m Digital Elevation Model (resampled to 0.25°)",
                 "role": "Static surface elevation input to spatial encoder (captures orographic lift & terrain gradient)",
@@ -692,6 +1079,109 @@ class NowcastService:
         png = generate_risk_surface_png(grid, self.lats, self.lons, mask=get_or_create_wb_mask())
         cache[lead_hours] = png
         return png
+
+    # Historical t=0 ANALYSIS surface -- the "NOW" state of the case study.
+    #
+    # Why this exists: selecting NOW in historical mode previously left the map
+    # blank. renderContinuousRiskSurface() correctly refuses to paint a FORECAST
+    # at NOW, and renderObservationSurface() correctly refuses to serve LIVE
+    # station observations for a frozen 2024 case study -- so both layers were
+    # removed and nothing was drawn.
+    #
+    # The scientifically correct NOW field for a historical replay is the
+    # OBSERVED reanalysis state at the case study's analysis time (t=0), which is
+    # already loaded in era5_surface_t0. It is an analysis, not a prediction, so
+    # it is rendered with the observation palette and labelled as an analysis.
+    # The model's forecast fields (leads 2-6) are NEVER reused for t=0.
+    HISTORICAL_ANALYSIS_VARIABLES = {
+        "rain_mm": {
+            "label": "Rainfall rate at analysis time",
+            "units": "mm/hour",
+            "vmax": HISTORICAL_RAIN_RENDER_MAX_MM_H,
+        },
+    }
+
+    def get_historical_analysis_surface_png(self, variable: str = "rain_mm") -> bytes:
+        """PNG of the historical case study's OBSERVED t=0 field.
+
+        Raises RuntimeError (never substitutes another event or a forecast) when
+        the historical analysis state is unavailable.
+        """
+        if variable not in self.HISTORICAL_ANALYSIS_VARIABLES:
+            raise RuntimeError(
+                f"Unsupported historical analysis variable '{variable}'. "
+                f"Available: {sorted(self.HISTORICAL_ANALYSIS_VARIABLES)}"
+            )
+        state = getattr(self, "era5_surface_t0", None)
+        if not state or variable not in state:
+            raise RuntimeError(
+                "Historical analysis state is unavailable: the reanalysis cache "
+                "for the case study did not load, so there is no t=0 field to "
+                "render. No substitute event or forecast field is used."
+            )
+        cached = self._historical_analysis_png_cache.get(variable)
+        if cached is not None:
+            return cached
+        spec = self.HISTORICAL_ANALYSIS_VARIABLES[variable]
+        field = np.asarray(state[variable])
+        # Scale the ramp to THIS field's observed peak rather than a fixed
+        # ceiling. Remal's t=0 domain mean is ~1.2 mm/h against a 30 mm/h
+        # ceiling, so a fixed vmax normalised almost every cell to near zero and
+        # the rain structure rendered nearly invisible. The floor keeps a
+        # genuinely dry field from being amplified into false signal.
+        observed_peak = float(np.nanmax(field)) if np.isfinite(field).any() else 0.0
+        vmax = max(observed_peak, 1.0)
+        png = generate_analysis_surface_png(
+            field,
+            self.lats,
+            self.lons,
+            vmax=vmax,
+            mask=get_or_create_wb_mask(),
+        )
+        self._historical_analysis_png_cache[variable] = png
+        return png
+
+    def get_historical_analysis_state(self) -> Dict[str, Any]:
+        """Provenance + domain statistics for the historical t=0 analysis field.
+
+        Everything here describes an OBSERVED reanalysis state, never a forecast,
+        so the UI can label it truthfully.
+        """
+        state = getattr(self, "era5_surface_t0", None)
+        if not state:
+            return {
+                "status": "unavailable",
+                "mode": "historical",
+                "reason": (
+                    "The reanalysis cache for the historical case study did not "
+                    "load, so no t=0 analysis field is available."
+                ),
+            }
+        rain = np.asarray(state["rain_mm"])
+        return {
+            "status": "ok",
+            "mode": "historical",
+            "event": HISTORICAL_EVENT_NAME,
+            "analysis_time": self.current_valid_time,
+            "kind": "analysis",
+            "is_forecast": False,
+            "is_observation": True,
+            "lead_hours": 0,
+            "variable": "rain_mm",
+            "label": "Rainfall rate at analysis time",
+            "units": "mm/hour",
+            "source": HISTORICAL_ANALYSIS_SOURCE,
+            # Must match the ceiling the PNG renderer actually used, or the
+            # legend would describe a different scale than the image.
+            "render_scale_max_mm_h": float(round(max(float(rain.max()), 1.0), 2)),
+            "domain_max_mm_h": float(round(float(rain.max()), 2)),
+            "domain_mean_mm_h": float(round(float(rain.mean()), 3)),
+            "provenance_note": (
+                "Observed reanalysis field at the case study's analysis time "
+                "(t=0). This is an analysis, not a model forecast, and not a "
+                "live observation."
+            ),
+        }
 
     def get_risk_surface_bounds(self) -> Dict[str, Any]:
         """Return Leaflet-compatible bounding box for the risk surface."""
@@ -801,7 +1291,7 @@ class NowcastService:
             "lead_hours": lead_hours,
             "issue_time_utc": issue_dt.strftime("%d %b %Y %H:%M UTC"),
             "forecast_valid_utc": valid_formatted,
-            "model_name": "SevereWeatherNet V2 Calibrated",
+            "model_name": "StormSense AI Forecast",
             "predictions": {
                 "thunderstorm_prob_pct": float(round(sp * 100, 1)),
                 "heavy_rain_mm": float(round(rp, 1)),
@@ -986,34 +1476,109 @@ class NowcastService:
             })
         return top_cells
 
-    def get_xai_attribution(self, mode: Optional[str] = None) -> Dict[str, Any]:
-        """Returns physical feature attribution and model architecture rationale."""
+    def get_xai_attribution(
+        self,
+        mode: Optional[str] = None,
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        lead_hours: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Atmospheric factor attribution for the selected mode/location/horizon.
+
+        METHOD (stated plainly, because it matters): this is RULE-BASED,
+        PHYSICS-INSPIRED attribution. Scores are computed by explicit formulas
+        over the atmospheric variables actually fed to the model and normalized
+        to relative contributions. It is NOT SHAP, NOT gradient/saliency-based,
+        and NOT neural-network feature importance -- no claim of either is made
+        anywhere in the response.
+
+        The inputs are read from the REAL live input tensor at the requested
+        location (previously they were hardcoded placeholders -- humidity 85,
+        CAPE 1500, wind 15 -- which made live attribution entirely fictitious
+        and identical everywhere).
+        """
         resolved = self._resolve_mode(mode)
         if resolved == "live":
-            # For live, we use the rule-based physics XAI
+            if self.live_surface_state is None:
+                return {
+                    "status": "unavailable",
+                    "mode": "live",
+                    "attribution_method": "Rule-based physics-inspired factor attribution",
+                    "message": (
+                        "Live atmospheric input has not been ingested yet, so no "
+                        "attribution can be computed. "
+                        + (self.live_fetch_error or "")
+                    ).strip(),
+                    "factors": [],
+                }
+
+            # Resolve the grid cell for the requested point (default: the
+            # domain's highest-risk cell at this horizon, so the panel explains
+            # the area the dashboard is actually warning about).
+            lh = lead_hours if lead_hours in self.lead_times else self.lead_times[0]
+            li = self.lead_times.index(lh)
+            if lat is not None and lon is not None:
+                i = int(np.argmin(np.abs(self.lats - lat)))
+                j = int(np.argmin(np.abs(self.lons - lon)))
+                loc_desc = f"{float(self.lats[i]):.2f}N, {float(self.lons[j]):.2f}E"
+            else:
+                prob = self.live_pred["severe_weather_prob"][li]
+                i, j = np.unravel_index(int(np.argmax(prob)), prob.shape)
+                i, j = int(i), int(j)
+                loc_desc = f"highest-risk cell ({float(self.lats[i]):.2f}N, {float(self.lons[j]):.2f}E)"
+
+            s = self.live_surface_state  # real, denormalized t0 GFS analysis state
             xai_inputs = {
-                "rainfall_1h_mm": 0, # Could be derived from GFS surface if needed
-                "rainfall_3h_mm": 0,
-                "rainfall_6h_mm": 0,
-                "humidity_percent": 85, # placeholder or from OpenWeather
-                "dew_point_c": 24, # placeholder
-                "cape_jkg": 1500, # default plausible if missing
-                "wind_speed_kmh": 15,
-                "radar_dbz": None
+                "rainfall_1h_mm": float(s["rain_mm_h"][i, j]),
+                "rainfall_3h_mm": float(s["rain_mm_h"][i, j]) * 3.0,
+                "rainfall_6h_mm": float(s["rain_mm_h"][i, j]) * 6.0,
+                "humidity_percent": float(s["rh_pct"][i, j]),
+                "dew_point_c": float(s["dewpoint_c"][i, j]),
+                "cape_jkg": float(s["cape_j_kg"][i, j]),
+                "wind_speed_kmh": float(s["wind_kmh"][i, j]),
+                # No reflectivity is ingested anywhere in this system, so the
+                # radar factor is genuinely absent rather than invented.
+                "radar_dbz": None,
             }
-            # Try to grab real values if live pred is available
-            if self.live_pred is not None:
-                # Use a typical cell or just mean across WB
-                # Or just use the OpenWeather telemetry if available
-                # But XAI is for the ML input, we don't have per-cell XAI yet.
-                pass
-            
-            return calculate_xai_factors(xai_inputs)
-            
+            out = calculate_xai_factors(xai_inputs)
+            out["mode"] = "live"
+            out["location"] = loc_desc
+            out["lead_hours"] = lh
+            out["grid_cell"] = {"lat": round(float(self.lats[i]), 2), "lon": round(float(self.lons[j]), 2)}
+            out["predicted_severe_prob_pct"] = round(
+                float(self.live_pred["severe_weather_prob"][li, i, j]) * 100.0, 1
+            )
+            out["input_analysis_time"] = self.live_analysis_time
+            out["method_disclosure"] = (
+                "Rule-based, physics-inspired attribution computed from the atmospheric "
+                "variables fed to the model. Not SHAP, not gradient-based, and not "
+                "neural-network feature importance."
+            )
+            out["validation_note"] = (
+                "The forecast model's skill was measured on held-out data. The "
+                "attribution weighting itself is a physically-motivated heuristic and "
+                "has not been separately validated."
+            )
+            return out
+
         return {
-            "model_architecture": "SevereWeatherNet V2",
+            "mode": "historical",
+            "model_architecture": "StormSense AI Forecast",
             "parameters": self.predictor.model.count_parameters(),
-            "attribution_method": "Atmospheric Modality & Physical Diagnostic Attribution",
+            "attribution_method": "Physics-based diagnostic attribution",
+            "method_disclosure": (
+                "These are the physical atmospheric diagnostics the model consumes, "
+                "ranked by their established meteorological role in convective "
+                "development, with their real measured values from the case study's "
+                "input window. This is expert-defined physical attribution -- it is "
+                "NOT SHAP, not gradient-based saliency, and not learned neural-network "
+                "feature importance."
+            ),
+            "validation_note": (
+                "The forecast model's predictive skill was measured on the held-out "
+                "2024 season (metrics below). The attribution ORDERING itself is "
+                "physically motivated and was not separately validated."
+            ),
             "factors": [
                 {
                     "name": "Convective Instability (CAPE & CIN)",
@@ -1023,7 +1588,12 @@ class NowcastService:
                     "impact": "Dominant"
                 },
                 {
-                    "name": "Low-Level Bulk Wind Shear (1000–700 hPa)",
+                    # Reads bulk_shear_0_6km_mps, so it must be labelled as the
+                    # 0-6 km shear it actually is. The historical ERA5 profile
+                    # genuinely supports this depth; the 1000-700 hPa label
+                    # belongs to the LIVE GFS path, which cannot see above
+                    # 700 hPa. Conflating the two misstates the layer depth.
+                    "name": "Deep-Layer Bulk Wind Shear (0–6 km)",
                     "value": f"{self.current_thermo.get('bulk_shear_0_6km_mps', 'N/A')} m/s",
                     "physical_role": "Kinematic vector separation organizing storm updrafts and delaying convective precipitation downdraft choking.",
                     "importance_rank": 2,

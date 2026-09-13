@@ -1,0 +1,94 @@
+/* StormSense — Phase 1 custom styles (Tailwind utilities remain in HTML via CDN). */
+
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.6)); }
+  50% { opacity: 0.5; transform: scale(1.1); filter: drop-shadow(0 0 16px rgba(239, 68, 68, 0.9)); }
+}
+
+.radar-sweep-pro {
+  background: conic-gradient(from 0deg, rgba(239, 68, 68, 0) 0deg, rgba(239, 68, 68, 0.05) 45deg, rgba(239, 68, 68, 0.35) 90deg, rgba(239, 68, 68, 0) 90.1deg);
+  animation: radar-sweep 5s linear infinite;
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+.demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 1.5rem;
+  background: rgba(245, 158, 11, 0.12);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+  font-size: 0.75rem;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.04em;
+}
+
+/* StormSense — Leaflet Interactive Map styling */
+#map-radar-placeholder.leaflet-container,
+#radar-map-container.leaflet-container {
+  background: #070b12;
+  font-family: inherit;
+  outline: none;
+}
+
+#map-radar-placeholder .leaflet-tile-pane,
+#radar-map-container .leaflet-tile-pane {
+  filter: brightness(0.95) contrast(1.05);
+}
+
+#map-radar-placeholder .leaflet-control-attribution,
+#radar-map-container .leaflet-control-attribution {
+  background: rgba(11, 15, 25, 0.85) !important;
+  color: #64748b !important;
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 9px !important;
+  border-radius: 6px !important;
+  margin: 0 8px 8px 0 !important;
+  padding: 2px 6px !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+#map-radar-placeholder .leaflet-control-attribution a,
+#radar-map-container .leaflet-control-attribution a {
+  color: #94a3b8 !important;
+  text-decoration: none;
+}
+
+#map-radar-placeholder .leaflet-control-attribution a:hover,
+#radar-map-container .leaflet-control-attribution a:hover {
+  text-decoration: underline;
+}

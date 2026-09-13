@@ -100,6 +100,33 @@ def get_or_create_wb_mask(
     return mask
 
 
+# ── Spatial risk field colour bands ──────────────────────────────────────────
+# WHICH MODEL VARIABLE THIS COLOURS (traced, per requirement):
+#   `severe_weather_prob` -- the temperature-scaled calibrated sigmoid of the
+#   model's `severe_weather_logit` head. Its training label is defined in
+#   src/features/targets.py as  (rolling 3h tp > heavy_rain_3h_mm) OR
+#   (CAPE > cape_severe_jkg AND CIN < cin_weak_jkg), i.e. a severe-weather
+#   PROXY probability in [0, 1].
+#
+#   It is deliberately NOT any of these, which are different quantities:
+#     * rain_3h_mm_pred  -- a regression in millimetres, not a probability;
+#                           colouring it on a 0-1 ramp would be meaningless.
+#     * radar reflectivity -- this model has no reflectivity head, and none is
+#                           ingested; there is nothing to colour.
+#     * lightning        -- not modelled and not available in ERA5/GFS input.
+#   Because the bands below are probability cut-points, the variable they are
+#   applied to MUST be a probability. severe_weather_prob is the only such
+#   spatial field the model produces.
+#
+# Band edges are an internal implementation detail and are intentionally not
+# surfaced as numbers anywhere in the public UI -- the interface communicates
+# only the resulting category/colour.
+_BAND_CLEAR_MAX = 0.20   # below this: no meaningful risk -> left uncoloured
+_BAND_GREEN_MAX = 0.25   # lower risk
+_BAND_ORANGE_MAX = 0.75  # moderate through elevated risk
+# at and above _BAND_ORANGE_MAX: high risk
+
+
 def colormap_risk_surface(smoothed_grid: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Apply model 4-stage risk color ramp to continuous probability values (0.0 to 1.0).
 
@@ -198,3 +225,115 @@ def generate_risk_surface_png(
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
+
+
+# Physical ceiling used to normalize the historical ERA5 rainfall analysis for
+# display. This is a RENDERING scale only -- it never clips or alters the stored
+# data (see nowcast_service.era5_surface_t0, which keeps true mm/hour). Chosen to
+# match the observation surface's rain_1h_mm ramp so the historical t=0 field and
+# the live NOW field are read on comparable intensity scales.
+HISTORICAL_RAIN_RENDER_MAX_MM_H = 30.0
+
+
+def generate_analysis_surface_png(
+    field: np.ndarray,
+    lats_coarse: np.ndarray,
+    lons_coarse: np.ndarray,
+    vmax: float = HISTORICAL_RAIN_RENDER_MAX_MM_H,
+    mask: Optional[np.ndarray] = None,
+    h: int = DEFAULT_H,
+    w: int = DEFAULT_W,
+    sigma: float = 1.2,
+) -> bytes:
+    """Render a gridded ANALYSIS (observed/reanalysis) field as a PNG.
+
+    This exists so the historical case study's t=0 state can be shown on the map
+    as what it actually is -- an observed reanalysis field at the analysis time --
+    instead of either (a) leaving the map blank or (b) painting a model FORECAST
+    under a "NOW" label, which would misrepresent future model output as a
+    present-tense observation.
+
+    The palette is the BLUE/TEAL observation ramp, deliberately distinct from the
+    green->amber->orange->red forecast risk ramp, so an analysis field can never
+    be misread as a severe-weather risk forecast. Interpolation, smoothing and
+    the West Bengal clip are identical to the forecast surface, so the two are
+    geographically comparable.
+    """
+    if mask is None:
+        mask = get_or_create_wb_mask(h=h, w=w)
+
+    # Ensure strictly ascending coordinates for RegularGridInterpolator.
+    if lats_coarse[0] > lats_coarse[-1]:
+        lat_asc = lats_coarse[::-1]
+        grid_asc = field[::-1, :]
+    else:
+        lat_asc = lats_coarse
+        grid_asc = field
+
+    if lons_coarse[0] > lons_coarse[-1]:
+        lon_asc = lons_coarse[::-1]
+        grid_asc = grid_asc[:, ::-1]
+    else:
+        lon_asc = lons_coarse
+
+    interp = RegularGridInterpolator(
+        (lat_asc, lon_asc),
+        np.nan_to_num(grid_asc, nan=0.0),
+        method="cubic",
+        bounds_error=False,
+        fill_value=0.0,
+    )
+
+    lats_fine = np.linspace(WB_MAX_LAT, WB_MIN_LAT, h)
+    lons_fine = np.linspace(WB_MIN_LON, WB_MAX_LON, w)
+    lat_mesh, lon_mesh = np.meshgrid(lats_fine, lons_fine, indexing="ij")
+
+    fine_vals = gaussian_filter(interp((lat_mesh, lon_mesh)), sigma=sigma)
+    # Cubic interpolation can undershoot below zero around sharp gradients;
+    # rainfall cannot be negative.
+    fine_vals = np.clip(fine_vals, 0.0, None)
+    norm = np.clip(fine_vals / max(float(vmax), 1e-9), 0.0, 1.0)
+
+    # Blue -> teal -> cyan -> white, deliberately NOT the green->red forecast
+    # risk ramp, so an observed field can never be misread as predicted risk.
+    # The extra stops give light and moderate rain visible separation instead of
+    # collapsing them into one flat blue.
+    stops = np.array([
+        [12, 74, 110],    # deep blue (light rain)
+        [14, 165, 190],   # teal
+        [34, 211, 238],   # cyan
+        [125, 240, 250],  # bright cyan
+        [224, 252, 255],  # near-white (heaviest)
+    ], dtype=np.float64)
+
+    pos = norm * (len(stops) - 1)
+    idx = np.clip(np.floor(pos).astype(int), 0, len(stops) - 2)
+    frac = (pos - idx)[..., None]
+    colours = stops[idx] * (1 - frac) + stops[idx + 1] * frac
+
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    valid = mask.astype(bool)
+    rgba[..., 0] = np.where(valid, colours[..., 0], 0)
+    rgba[..., 1] = np.where(valid, colours[..., 1], 0)
+    rgba[..., 2] = np.where(valid, colours[..., 2], 0)
+    # Dry cells fade out so the field reads as "no rain here", not a painted
+    # sheet. Rainfall is strongly right-skewed -- most wet cells sit far below
+    # the domain peak -- so a linear ramp left almost the whole field at single
+    # digit alpha and the storm was effectively invisible. A square-root curve
+    # lifts light and moderate rain into view while keeping genuinely dry cells
+    # transparent; it changes only opacity, never the mapped value or its colour.
+    # Only ~20% of the domain is wet at all and most of that is light rain, so a
+    # curve alone still rendered the storm nearly invisible. Give every cell that
+    # carries real rain a solid visible floor and ramp up from there; dry cells
+    # stay fully transparent so the shape of the rain area remains honest.
+    alpha = np.where(
+        norm < 0.02,
+        0.0,
+        140.0 + np.power(np.clip(norm, 0.0, 1.0), 0.45) * 115.0,
+    )
+    rgba[..., 3] = np.where(valid, alpha.astype(np.uint8), 0)
+
+    img = Image.fromarray(rgba, mode="RGBA")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()

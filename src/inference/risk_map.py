@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -165,7 +165,7 @@ def predictions_to_geojson(
             "n_grid_cells": len(features),
             "dem_source": "SRTM 30m DEM (0.25° resampled static elevation)",
             "proxy_disclaimer": (
-                "Predictions are derived from SevereWeatherNet V2 Calibrated ML model on ERA5 reanalysis proxies. "
+                "Predictions are derived from StormSense AI Forecast ML model on ERA5 reanalysis proxies. "
                 "All risk values are model estimates, not authoritative forecasts."
             ),
         },
@@ -259,7 +259,7 @@ def save_netcdf(pred: dict, path: str, valid_time: Optional[str] = None) -> None
             "lon": xr.DataArray(lons, dims=["lon"], attrs={"units": "degrees_east"}),
         },
         attrs={
-            "title": "SevereWeatherNet nowcast predictions",
+            "title": "StormSense nowcast predictions",
             "threshold": pred["threshold"],
             "proxy_disclaimer": "ERA5-derived proxy labels; not observed events",
             "generated_utc": datetime.now(timezone.utc).isoformat(),
