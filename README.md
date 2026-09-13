@@ -122,27 +122,40 @@ python -m venv venv
 
 Activate it:
 
-```text venv\Scripts\activate ```
+```text 
+venv\Scripts\activate 
+```
 
 Verify Python:
 
-```text python --version ```
+```text 
+python --version 
+```
 
 </details> <details> <summary><b>🐧 Linux / 🍎 macOS</b></summary> <br>
 
 Create a virtual environment:
 
+```text 
 python3 -m venv venv
+```
 
 Activate it:
 
+```text 
 source venv/bin/activate
+```
 
 Verify Python:
 
+```text 
 python3 --version
+```
+
 </details>
-📦 03 — Install Dependencies
+---
+
+## 📦 03 — Install Dependencies
 
 Make sure your virtual environment is active.
 
