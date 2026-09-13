@@ -105,7 +105,10 @@ cd StormSense
 Your StormSense workspace is ready.
 
 </div>
-🐍 02 — Set Up Python
+
+---
+
+## 🐍 02 — Set Up Python
 
 StormSense requires Python 3.13.
 
@@ -113,15 +116,16 @@ StormSense requires Python 3.13.
 
 Create a virtual environment:
 
-python -m venv venv
+```text python -m venv venv ```
 
 Activate it:
 
-venv\Scripts\activate
+```text venv\Scripts\activate ```
 
 Verify Python:
 
-python --version
+```text python --version ```
+
 </details> <details> <summary><b>🐧 Linux / 🍎 macOS</b></summary> <br>
 
 Create a virtual environment:
