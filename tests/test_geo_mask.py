@@ -137,10 +137,18 @@ def test_no_forecast_pixels_outside_west_bengal(wb_geom, mask):
     assert visible.size > 0, "forecast surface rendered completely transparent"
 
     # Half-pixel tolerance: a pixel centre just outside the polygon can still
-    # legitimately overlap the boundary. Buffer and prepare ONCE -- this geometry
-    # has ~76k vertices, so re-buffering per point is prohibitively slow.
+    # legitimately overlap the boundary.
+    #
+    # The tolerance is applied via distance() rather than by buffering the state
+    # polygon. buffer() on this geometry (~1.4M WKT chars) allocates heavily
+    # inside GEOS, and once the rest of the suite has loaded the torch model and
+    # the ERA5 memmaps it reliably triggers a native access violation on
+    # Windows -- the test passed alone and segfaulted in the full run.
+    # distance() is exact, needs no intermediate geometry, and enforces the same
+    # invariant: a visible pixel must be inside the state or within half a pixel
+    # of its boundary.
     tol = 0.5 * max((WB_MAX_LAT - WB_MIN_LAT) / (h - 1), (WB_MAX_LON - WB_MIN_LON) / (w - 1))
-    allowed = prep(wb_geom.buffer(tol))
+    allowed = prep(wb_geom)
 
     # Checking every visible pixel is still slow; sample densely and deterministically.
     rng = np.random.default_rng(0)
@@ -149,7 +157,8 @@ def test_no_forecast_pixels_outside_west_bengal(wb_geom, mask):
     outside = []
     for row, col in visible[sample_idx]:
         lat, lon = _pixel_latlon(int(row), int(col), h, w)
-        if not allowed.contains(Point(lon, lat)):
+        pt = Point(lon, lat)
+        if not allowed.contains(pt) and wb_geom.distance(pt) > tol:
             outside.append((round(lat, 3), round(lon, 3)))
 
     assert not outside, (
