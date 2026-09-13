@@ -1,377 +1,187 @@
-<div align="center">
+# AI-Driven Hyper-Local Early Warning System for Severe Weather Nowcasting
 
-# 🌩️ StormSense
-
-### AI-Powered Severe Weather Early Warning & Nowcasting System
-
-<br>
-
-<img src="https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white">
-<img src="https://img.shields.io/badge/PyTorch-Deep%20Learning-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white">
-<img src="https://img.shields.io/badge/NOAA-GFS-00AEEF?style=for-the-badge">
-<img src="https://img.shields.io/badge/Weather-Nowcasting-00AEEF?style=for-the-badge">
-<img src="https://img.shields.io/badge/West%20Bengal-India-138808?style=for-the-badge">
-
-<br><br>
-
-<b>Predict • Detect • Visualize • Warn</b>
-
-</div>
+## Smart India Hackathon 2024 | West Bengal Region
 
 ---
 
-<div align="center">
+## Quick Start
 
-# 🚀 Get StormSense Running
+### 1. Create GitHub account
+Open Chrome and go to:
 
-### Download the required files, configure the environment, and launch the complete system.
+[GitHub Sign Up](https://github.com/signup?utm_source=chatgpt.com)
 
-</div>
+Create the account and verify your email address.
 
-<br>
+### 2. Accept the StormSense invitation
 
-<div align="center">
+Check your email for the GitHub repository invitation from Souvik.
 
-<table>
-<tr>
-<td align="center" width="150">
+Or open:
 
-### 01
-📥
+[GitHub Invitations](https://github.com/notifications?utm_source=chatgpt.com)
 
-<b>Clone</b>
+Accept the invitation to the StormSense repository.
 
-</td>
-
-<td align="center" width="150">
-
-### 02
-🐍
-
-<b>Python</b>
-
-</td>
-
-<td align="center" width="150">
-
-### 03
-📦
-
-<b>Install</b>
-
-</td>
-
-<td align="center" width="150">
-
-### 04
-💾
-
-<b>Download</b>
-
-</td>
-
-<td align="center" width="150">
-
-### 05
-🔐
-
-<b>Configure</b>
-
-</td>
-
-<td align="center" width="150">
-
-### 06
-⚡
-
-<b>Launch</b>
-
-</td>
-</tr>
-</table>
-
-</div>
-
----
-
-## 📥 01 — Clone StormSense
-
-Open a terminal and clone the repository:
-
-git clone https://github.com/Souvik686/StormSense.git
-cd StormSense
-<div align="center">
-
-Your StormSense workspace is ready.
-
-</div>
-
----
-
-## 🐍 02 — Set Up Python
-
-StormSense requires Python 3.13.
-
-<details> <summary><b>🪟 Windows</b></summary> <br>
-
-Create a virtual environment:
-
-```text 
-python -m venv venv
-```
-
-Activate it:
-
-```text 
-venv\Scripts\activate 
-```
-
-Verify Python:
-
-```text 
-python --version 
-```
-
-</details> <details> <summary><b>🐧 Linux / 🍎 macOS</b></summary> <br>
-
-Create a virtual environment:
-
-```text 
-python3 -m venv venv
-```
-
-Activate it:
-
-```text 
-source venv/bin/activate
-```
-
-Verify Python:
-
-```text 
-python3 --version
-```
-
-</details>
-
----
-
-## 📦 03 — Install Dependencies
-
-Make sure your virtual environment is active.
-
-Then install all required Python packages:
-
-pip install -r requirements.txt
-
-Wait until the installation completes successfully.
-
-💾 04 — Download Runtime Data
-
-StormSense requires several runtime assets for the complete LIVE + HISTORICAL system.
-
-For the public repository, download the required runtime files using:
-
-python scripts/download_runtime_data.py
-
-The downloader prepares the required:
-
-<div align="center"> <table> <tr> <td align="center">
-
-🧠<br>
-<b>AI Model</b>
-
-</td> <td align="center">
-
-📊<br>
-<b>Normalization Data</b>
-
-</td> <td align="center">
-
-🗺️<br>
-<b>Map Boundaries</b>
-
-</td> <td align="center">
-
-⛰️<br>
-<b>Terrain Data</b>
-
-</td> <td align="center">
-
-🕐<br>
-<b>Historical Data</b>
-
-</td> </tr> </table> </div>
-⚡ LIVE Only
-
-If you only need the LIVE system:
-
-python scripts/download_runtime_data.py --live-only
-🔍 Verify Downloaded Files
-
-After downloading, verify the runtime files:
-
-python scripts/download_runtime_data.py --verify
-
-The downloader verifies the files using their expected SHA-256 checksums.
-
-⚠️ Important: Do not manually rename, move, or rearrange downloaded runtime files. StormSense expects them at specific paths.
-
-🔐 05 — Configure Environment
-
-StormSense uses an environment file for external API configuration.
-
-🪟 Windows
-copy .env.example .env
-🐧 Linux / 🍎 macOS
-cp .env.example .env
-
-Open the newly created .env file and add your OpenWeather API key:
-
-OPENWEATHER_API_KEY=your_api_key_here
-<div align="center">
-🔑 OpenWeather API Key
-
-Required for the LIVE weather observation layer.
-
-</div>
-⚡ 06 — Launch StormSense
-
-Make sure you are inside the StormSense project root and your virtual environment is active.
-
-Start the application:
-
-python run_server.py
-
-When the server starts successfully, open:
-
-<div align="center">
-🌐 http://127.0.0.1:8000
-</div>
-🌩️ LIVE Mode
-<div align="center">
-📡 Real-Time Weather Intelligence
-</div>
-
-Once StormSense opens:
-
-Select LIVE mode.
-Choose a forecast horizon.
-Explore the current weather conditions.
-Inspect the AI-generated severe-weather risk.
-Explore the interactive map and regional information.
-Available Horizons
-<div align="center">
-
-+2h     +4h     +6h
-
-</div>
-🌀 HISTORICAL Mode
-<div align="center">
-Reconstruct & Analyze Historical Severe Weather
-</div>
-
-To use Historical Mode:
-
-Open StormSense.
-Switch from LIVE to HISTORICAL.
-Select the available historical event.
-Select the desired forecast horizon.
-Explore the historical risk visualization.
-
-🕰️ Historical Mode uses the downloaded historical runtime dataset and is kept separate from LIVE weather observations.
-
-🧪 Verify the Complete Installation
-
-If you want to verify that the runtime assets are present:
-
-python scripts/download_runtime_data.py --verify
-
-Then launch the application:
-
-python run_server.py
+### 3. Install Python 3.13.7
 
 Open:
 
-http://127.0.0.1:8000
+[Python 3.13.7 for Windows](https://www.python.org/downloads/release/python-3137/?utm_source=chatgpt.com)
 
-If the StormSense dashboard loads successfully, the installation is ready.
+Download Windows installer (64-bit).
 
-🛠️ Quick Troubleshooting
-<details> <summary><b>❌ Python is not recognized</b></summary>
+Run the installer.
 
-Check your Python installation:
+Important: On the first installation screen, tick:
 
-python --version
+```
+☑ Add python.exe to PATH
+```
 
-StormSense requires Python 3.13.
+Then click Install Now.
 
-If the command is unavailable, install Python and make sure it is added to your system PATH.
+### 4. Check Python
 
-</details> <details> <summary><b>❌ ModuleNotFoundError</b></summary>
+Open Command Prompt and run:
 
-Make sure your virtual environment is activated:
+```bash
+py -3.13 --version
+```
 
+It must show:
+```
+Python 3.13.7
+```
+
+### 5. Install Git
+
+Open:
+
+[Git for Windows](https://git-scm.com/download/win?utm_source=chatgpt.com)
+
+Download and install Git.
+
+After installation, open a new Command Prompt and run:
+
+```bash
+git --version
+```
+
+### 6. Install Git LFS
+
+Open:
+
+[Git LFS](https://git-lfs.com/?utm_source=chatgpt.com)
+
+Download and install Git LFS.
+
+Then open Command Prompt and run:
+
+```bash
+git lfs install
+```
+
+You should see:
+
+```
+Git LFS initialized.
+```
+
+### 7. Clone StormSense
+
+In Command Prompt, go to the location where you want the project.
+
+For example:
+
+```bash
+cd Desktop
+```
+
+Then:
+
+```bash
+git clone https://github.com/Souvik686/StormSense.git
+```
+
+Enter the StormSense folder:
+
+```bash
+cd StormSense
+```
+
+### 8. Download the large LFS files
+
+Run:
+
+```bash
+git lfs pull
+```
+
+Wait until it finishes completely.
+
+### 9. Create the Python 3.13.7 virtual environment
+
+Run:
+
+```bash
+py -3.13 -m venv venv
+```
+
+### 10. Activate the environment
+
+```bash
 venv\Scripts\activate
+```
 
-Then reinstall the dependencies:
+You should see (venv) at the beginning of the Command Prompt.
 
-pip install -r requirements.txt
-</details> <details> <summary><b>❌ Runtime files are missing</b></summary>
+### 11. Verify Python version
 
-Run the runtime downloader:
+```bash
+python --version
+```
 
-python scripts/download_runtime_data.py
+It must show:
 
-Then verify:
+```
+Python 3.13.7
+```
 
-python scripts/download_runtime_data.py --verify
-</details> <details> <summary><b>❌ Live weather is unavailable</b></summary>
+### 12. Upgrade pip
 
-Check that your .env file contains:
+```bash
+python -m pip install --upgrade pip
+```
 
-OPENWEATHER_API_KEY=your_api_key_here
+### 13. Install StormSense dependencies
 
-Make sure the API key is valid and the machine has an internet connection.
+```bash
+python -m pip install -r requirements.txt
+```
 
-</details> <details> <summary><b>❌ The application does not start</b></summary>
+Wait until installation finishes.
 
-Make sure you are running the command from the StormSense root directory:
+### 14. Start StormSense
 
+Make sure (venv) is still visible in Command Prompt, then run:
+
+```bash
 python run_server.py
+```
 
-Also confirm that your virtual environment is active and dependencies are installed.
+### 15. Open StormSense
 
-</details>
-<div align="center">
-✅ You're Ready!
-<br> <table> <tr> <td align="center" width="250">
+The terminal will show the local server address.
 
-🌩️
+Open that address in Chrome.
 
-LIVE
+### Every time they want to run StormSense again
 
-Current weather
-+
-AI risk prediction
+Open Command Prompt:
 
-</td> <td align="center" width="250">
-
-🌀
-
-HISTORICAL
-
-Historical event
-+
-AI risk analysis
-
-</td> </tr> </table> <br>
-🚀
-
-<b>Clone → Install → Download → Configure → Launch</b>
-
-<br><br>
-
-<i>Predict the risk. Understand the storm. Act earlier.</i>
-
-</div> 
+```bash
+cd Desktop\StormSense
+venv\Scripts\activate
+python run_server.py
+```
