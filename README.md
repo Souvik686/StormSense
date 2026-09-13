@@ -98,7 +98,6 @@
 
 Open a terminal and clone the repository:
 
-```bash
 git clone https://github.com/Souvik686/StormSense.git
 cd StormSense
 <div align="center">
@@ -355,4 +354,4 @@ AI risk analysis
 
 <i>Predict the risk. Understand the storm. Act earlier.</i>
 
-</div> ```
+</div> 
