@@ -129,9 +129,16 @@ class PredictRequest(BaseModel):
     )
     valid_time: Optional[str] = Field(None, description="ISO-8601 timestamp")
 
-
 # ── Frontend Dashboard Endpoints ─────────────────────────────────────────────
+
 @app.get("/", tags=["Frontend"], response_class=FileResponse)
+async def serve_landing():
+    landing_path = os.path.join(os.path.dirname(frontend_dir), "landing.html")
+    if os.path.exists(landing_path):
+        return FileResponse(landing_path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="landing.html not found")
+
+
 @app.get("/index.html", tags=["Frontend"], response_class=FileResponse)
 @app.get("/app", tags=["Frontend"], response_class=FileResponse)
 @app.get("/dashboard", tags=["Frontend"], response_class=FileResponse)
