@@ -12,27 +12,30 @@
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <!-- Lucide Icons CDN -->
 <script src="https://unpkg.com/lucide@latest"></script>
+
 <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
-          },
-          colors: {
-            brand: {
-              cyan: '#38bdf8',
-              glow: '#00f2fe',
-              dark: '#0b101d',
-              card: '#111726',
-              surface: '#0f131c',
-            }
-          }
-        }
-      }
+  document.addEventListener('DOMContentLoaded', function () {
+
+    if (window.lucide) {
+      window.lucide.createIcons();
     }
+
+    const navLinks = document.querySelectorAll('#main-nav .nav-link');
+
+    navLinks.forEach(link => {
+      link.addEventListener('click', function () {
+
+        // Remove selected state from every nav item
+        navLinks.forEach(item => {
+          item.classList.remove('active');
+        });
+
+        // Add selected state to clicked item
+        this.classList.add('active');
+      });
+    });
+
+  });
 </script>
 <style>
   html {
@@ -49,6 +52,24 @@
     background: linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(56, 189, 248, 0) 50%);
     pointer-events: none;
   }
+  /* Navigation selected state */
+.nav-link {
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+  color: #94a3b8;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.nav-link:hover {
+  color: #ffffff;
+}
+
+.nav-link.active {
+  color: #7dd3fc;
+  border-color: rgba(14, 165, 233, 0.4);
+  background: rgba(8, 47, 73, 0.6);
+}
 </style>
 </head>
 <body class="bg-[#0b101d] text-slate-100 min-h-screen antialiased selection:bg-sky-500/30 font-sans relative overflow-x-hidden">
@@ -68,17 +89,17 @@
 </svg>
 </div>
 <span class="font-extrabold text-base tracking-wider text-white uppercase">STORMSENSE</span>
-<span class="px-2 py-0.5 rounded border border-sky-400/60 bg-sky-500/10 text-sky-400 text-[11px] font-mono font-bold tracking-wider">AI NOWCAST V2.4</span>
+<span class="px-2 py-0.5 rounded border border-sky-400/60 bg-sky-500/10 text-sky-400 text-[11px] font-mono font-bold tracking-wider">AI FORECAST</span>
 </a>
 <!-- Center Navigation: Exactly the 7 topics with matching href IDs -->
-<nav class="hidden xl:flex items-center gap-5 text-sm font-medium">
-<a class="px-3 py-1 rounded-md border border-sky-500/40 bg-sky-950/60 text-sky-300 font-medium hover:bg-sky-900/60 transition-colors" href="#platform">Platform</a>
-<a class="text-slate-400 hover:text-white transition-colors" href="#capabilities">Capabilities</a>
-<a class="text-slate-400 hover:text-white transition-colors" href="#live-radar">Live Radar</a>
-<a class="text-slate-400 hover:text-white transition-colors" href="#how-it-works">How It Works</a>
-<a class="text-slate-400 hover:text-white transition-colors" href="#district-monitoring">District Monitoring</a>
-<a class="text-slate-400 hover:text-white transition-colors" href="#impact">Impact</a>
-<a class="text-slate-400 hover:text-white transition-colors" href="#about">About</a>
+<nav id="main-nav" class="hidden xl:flex items-center gap-5 text-sm font-medium">
+  <a class="nav-link active" href="#platform">Platform</a>
+  <a class="nav-link" href="#capabilities">Capabilities</a>
+  <a class="nav-link" href="#live-radar">Live Radar</a>
+  <a class="nav-link" href="#how-it-works">How It Works</a>
+  <a class="nav-link" href="#district-monitoring">District Monitoring</a>
+  <a class="nav-link" href="#impact">Impact</a>
+  <a class="nav-link" href="#about">About</a>
 </nav>
 <!-- Right: Live WB Radar Feed Pill with green live pulse dot -->
 <div class="flex items-center shrink-0">
@@ -129,7 +150,7 @@
         </p>
 <!-- Primary Dual CTAs -->
 <div class="flex flex-wrap items-center gap-3 pt-2">
-<a class="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-sm md:text-base shadow-xl shadow-red-600/30 hover:shadow-red-600/50 transition-all group" href="#district-monitoring">
+<a class="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-sm md:text-base shadow-xl shadow-red-600/30 hover:shadow-red-600/50 transition-all group" href="/app">
 <i class="w-4 h-4 text-amber-300 fill-amber-300" data-lucide="zap"></i>
 <span>Launch Statewide Nowcasting Desk</span>
 <i class="w-4 h-4 group-hover:translate-x-1 transition-transform" data-lucide="arrow-right"></i>
