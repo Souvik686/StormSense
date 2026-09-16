@@ -38,6 +38,22 @@
   });
 </script>
 <style>
+  .btn-radar-sweep {
+  position: relative;
+  overflow: hidden;
+}
+.btn-radar-sweep::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25) 0%, rgba(56, 189, 248, 0) 60%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.btn-radar-sweep:hover::after {
+  opacity: 1;
+}
   html {
     scroll-behavior: smooth;
   }
@@ -105,7 +121,7 @@
 <div class="flex items-center shrink-0">
 <a class="flex items-center gap-2 px-3 py-1 rounded-md border border-slate-700/80 bg-slate-900/90 hover:border-sky-500/50 text-slate-100 font-mono text-xs font-semibold tracking-wider transition-colors shadow-sm" href="#live-radar">
 <span class="w-2 h-2 rounded-[1px] bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse inline-block"></span>
-<span class="tracking-wide">■ LIVE WB RADAR FEED</span>
+<span class="tracking-wide">LIVE WB RADAR FEED</span>
 </a>
 </div>
 </div>
@@ -150,15 +166,27 @@
         </p>
 <!-- Primary Dual CTAs -->
 <div class="flex flex-wrap items-center gap-3 pt-2">
-<a class="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-sm md:text-base shadow-xl shadow-red-600/30 hover:shadow-red-600/50 transition-all group" href="/app">
-<i class="w-4 h-4 text-amber-300 fill-amber-300" data-lucide="zap"></i>
-<span>Launch Statewide Nowcasting Desk</span>
-<i class="w-4 h-4 group-hover:translate-x-1 transition-transform" data-lucide="arrow-right"></i>
+<a class="btn-radar-sweep group relative inline-flex items-center gap-3 px-8 py-4 rounded-xl text-white font-semibold text-base md:text-lg shadow-2xl shadow-red-600/50 hover:shadow-emerald-500/60 transition-all duration-300 transform hover:-translate-y-0.5 border border-emerald-400/50 overflow-hidden" href="/app">
+
+<!-- Base vibrant gradient -->
+<span class="absolute inset-0 bg-gradient-to-r from-red-500 via-amber-400 to-emerald-500 group-hover:from-red-400 group-hover:via-amber-300 group-hover:to-emerald-400 transition-all duration-300"></span>
+
+<!-- Soft dark vignette ONLY in center (keeps edges vivid) -->
+<span class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(0,0,0,0.45)_0%,rgba(0,0,0,0.15)_55%,rgba(0,0,0,0)_100%)] group-hover:bg-[radial-gradient(ellipse_at_center,rgba(0,0,0,0.35)_0%,rgba(0,0,0,0.1)_55%,rgba(0,0,0,0)_100%)] transition-all duration-300"></span>
+
+<!-- Shine sweep -->
+<span class="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></span>
+
+<!-- Content -->
+<i class="w-5 h-5 text-white fill-white relative z-10 group-hover:rotate-12 transition-transform duration-300 drop-shadow-[0_2px_3px_rgba(0,0,0,0.7)]" data-lucide="zap"></i>
+<span class="relative z-10 tracking-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)]">Launch StormSense Nowcasting Desk</span>
+<i class="w-5 h-5 text-white group-hover:translate-x-1.5 transition-transform duration-300 relative z-10 drop-shadow-[0_2px_3px_rgba(0,0,0,0.7)]" data-lucide="arrow-right"></i>
+
 </a>
-<a class="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-sky-400 border border-sky-500/40 hover:border-sky-400 font-semibold text-sm md:text-base transition-colors" href="#live-radar">
+<!-- <a class="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-sky-400 border border-sky-500/40 hover:border-sky-400 font-semibold text-sm md:text-base transition-colors" href="#live-radar">
 <i class="w-4 h-4 text-sky-400" data-lucide="radar"></i>
 <span>Explore Live Radar Feed</span>
-</a>
+</a> -->
 </div>
 <!-- Trust Badges -->
 <div class="flex flex-wrap items-center gap-4 pt-3 text-xs font-mono text-slate-400 border-t border-slate-800/60">
@@ -391,7 +419,7 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
 <div>
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// STATEWIDE SENSOR NETWORK</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">STATEWIDE SENSOR NETWORK</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
           Live Radar: High-Resolution Doppler Reflectivity &amp; Satellite Telemetry
         </h2>
@@ -449,7 +477,7 @@
 <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
 <!-- Station Health Grid (5 cols) -->
 <div class="lg:col-span-5 space-y-2 font-mono text-xs">
-<span class="text-xs uppercase tracking-wider text-sky-400 font-bold block mb-2">// RADAR &amp; SATELLITE DOWNLINK STATUS</span>
+<span class="text-xs uppercase tracking-wider text-sky-400 font-bold block mb-2">RADAR &amp; SATELLITE DOWNLINK STATUS</span>
 <div class="p-2.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
 <div class="flex items-center gap-2">
 <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
@@ -481,7 +509,7 @@
 </div>
 <!-- SCIT Convective Cell Tracking Table (7 cols) -->
 <div class="lg:col-span-7">
-<span class="text-xs font-mono uppercase tracking-wider text-rose-400 font-bold block mb-2">// ACTIVE SCIT CONVECTIVE CELL TRACKING TABLE</span>
+<span class="text-xs font-mono uppercase tracking-wider text-rose-400 font-bold block mb-2">ACTIVE SCIT CONVECTIVE CELL TRACKING TABLE</span>
 <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">
 <table class="w-full text-left font-mono text-xs">
 <thead class="bg-slate-900 text-slate-400 border-b border-slate-800">
@@ -531,7 +559,7 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-10">
 <div>
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// AI PIPELINE &amp; ARCHITECTURE</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">AI PIPELINE &amp; ARCHITECTURE</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
           How It Works: Statewide Atmospheric Ingestion &amp; Neural Architecture
         </h2>
