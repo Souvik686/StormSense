@@ -33,8 +33,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 WB_STATE_GEOJSON = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_full.geojson")
 WB_DISTRICTS_GEOJSON = os.path.join(PROJECT_ROOT, "Data", "BOUNDARIES", "west_bengal_districts_full.geojson")
 
-DEFAULT_H = 600
-DEFAULT_W = 400
+DEFAULT_H = 66
+DEFAULT_W = 50
 
 # ---------------------------------------------------------------------------
 # THREE DISTINCT GRIDS. Keeping them separate is what stops the visualization
@@ -58,11 +58,8 @@ DEFAULT_W = 400
 # at a higher DPI. It does not change the science, the values, or the ~10 km
 # visualization sampling that the UI reports.
 # ---------------------------------------------------------------------------
-# Raised from 660x500: at high map zoom the band boundaries are magnified, and
-# a coarser raster made those boundaries look like stair-stepped rectangles.
-# This is image resolution only -- the field and its values are unchanged.
-RENDER_H = 1320
-RENDER_W = 1000
+RENDER_H = 660
+RENDER_W = 500
 
 
 def get_or_create_wb_mask(
@@ -156,51 +153,50 @@ _BAND_ORANGE_MAX = 0.75  # moderate through elevated risk
 
 
 def colormap_risk_surface(smoothed_grid: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Apply the 4-stage risk colour ramp as FLAT, SINGLE-COLOUR bands.
+    """Apply model 4-stage risk color ramp to continuous probability values (0.0 to 1.0).
 
-    Each risk category is painted in ONE solid colour with no intra-band fade:
-
-        < 0.25  Normal   emerald   #10b981
-        < 0.50  Watch    amber     #f59e0b
-        < 0.75  Alert    orange    #f97316
-       >= 0.75  Warning  red       #ef4444
-
-    These are exactly the four colours in the map legend, so a pixel's colour
-    now maps one-to-one onto the legend entry rather than sitting somewhere on a
-    continuous gradient between two of them.
-
-    Why flat rather than graded: the previous ramp interpolated within each band
-    (alpha and RGB both varied with the value), which made neighbouring
-    interpolation cells differ slightly and read as visible rectangular tiles at
-    high zoom. Constant colour inside a band removes that cell-to-cell variation
-    entirely, so the only visible edges are the BAND boundaries -- and because
-    the underlying field is smooth and rendered at the high-resolution render
-    grid, those boundaries are smooth curves, like contour fills on an
-    operational meteorological chart.
-
-    The risk VALUES are untouched; this changes only how a value is coloured.
-    Band edges match NowcastService._level_for_prob (0.25 / 0.50 / 0.75).
+    Green (Normal/Low Risk: <0.25), Yellow (Watch/Moderate: 0.25-0.50),
+    Orange (Alert/High: 0.50-0.75), Red (Warning/Severe: >=0.75).
+    Every valid pixel inside the West Bengal polygon receives a visible color.
+    Alpha is strictly transparent (0) outside the West Bengal boundary.
     """
     h, w = smoothed_grid.shape
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
 
-    # Single opacity for every band: a value-dependent alpha would reintroduce
-    # exactly the per-cell variation this change removes.
-    ALPHA = 200
+    # Level 1: < 0.25 (Soft Emerald/Green - Normal / Routine Watch)
+    # Solid visible emerald so low-risk areas (e.g. Northern WB) are NEVER transparent!
+    m1 = smoothed_grid < 0.25
+    t1 = np.clip(smoothed_grid[m1] / 0.25, 0.0, 1.0)
+    rgba[m1, 0] = (16 + 20 * t1).astype(np.uint8)
+    rgba[m1, 1] = (185 - 10 * t1).astype(np.uint8)
+    rgba[m1, 2] = (129 - 40 * t1).astype(np.uint8)
+    rgba[m1, 3] = (150 + 25 * t1).astype(np.uint8)
 
-    bands = (
-        (smoothed_grid < 0.25,                                (16, 185, 129)),   # emerald
-        ((smoothed_grid >= 0.25) & (smoothed_grid < 0.50),    (245, 158, 11)),   # amber
-        ((smoothed_grid >= 0.50) & (smoothed_grid < 0.75),    (249, 115, 22)),   # orange
-        (smoothed_grid >= 0.75,                               (239, 68, 68)),    # red
-    )
-    for sel, (r, g, b) in bands:
-        rgba[sel, 0] = r
-        rgba[sel, 1] = g
-        rgba[sel, 2] = b
-        rgba[sel, 3] = ALPHA
+    # Level 2: 0.25 to 0.50 (Yellow/Amber - Watch)
+    m2 = (smoothed_grid >= 0.25) & (smoothed_grid < 0.50)
+    t2 = (smoothed_grid[m2] - 0.25) / 0.25
+    rgba[m2, 0] = (234 + 11 * t2).astype(np.uint8)
+    rgba[m2, 1] = (179 - 15 * t2).astype(np.uint8)
+    rgba[m2, 2] = (8 + 12 * t2).astype(np.uint8)
+    rgba[m2, 3] = (175 + 25 * t2).astype(np.uint8)
 
-    # Strictly clip outside West Bengal.
+    # Level 3: 0.50 to 0.75 (Orange - Alert)
+    m3 = (smoothed_grid >= 0.50) & (smoothed_grid < 0.75)
+    t3 = (smoothed_grid[m3] - 0.50) / 0.25
+    rgba[m3, 0] = (249 - 10 * t3).astype(np.uint8)
+    rgba[m3, 1] = (115 - 47 * t3).astype(np.uint8)
+    rgba[m3, 2] = (22 + 46 * t3).astype(np.uint8)
+    rgba[m3, 3] = (200 + 25 * t3).astype(np.uint8)
+
+    # Level 4: >= 0.75 (Severe Red - Warning)
+    m4 = smoothed_grid >= 0.75
+    t4 = np.clip((smoothed_grid[m4] - 0.75) / 0.25, 0.0, 1.0)
+    rgba[m4, 0] = 239
+    rgba[m4, 1] = (68 * (1.0 - 0.4 * t4)).astype(np.uint8)
+    rgba[m4, 2] = (68 * (1.0 - 0.4 * t4)).astype(np.uint8)
+    rgba[m4, 3] = (225 + 25 * t4).astype(np.uint8)
+
+    # Strictly clip outside West Bengal
     rgba[~mask] = [0, 0, 0, 0]
     return rgba
 
@@ -212,7 +208,7 @@ def generate_risk_surface_png(
     mask: Optional[np.ndarray] = None,
     h: int = DEFAULT_H,
     w: int = DEFAULT_W,
-    sigma: float = 3.0,
+    sigma: float = 1.2,
 ) -> bytes:
     """Interpolate coarse grid to fine resolution, clip to WB boundary, return PNG bytes."""
     if mask is None:
@@ -260,12 +256,7 @@ def generate_risk_surface_png(
     band_interp = RegularGridInterpolator(
         (lats_fine[::-1], lons_fine),
         smoothed[::-1, :],
-        # CUBIC, not linear. Bilinear resampling is piecewise-planar, so each
-        # visualization cell became a flat facet and the band boundaries ran
-        # along straight cell edges -- the "box" look at high zoom. Cubic gives
-        # a continuously curved surface, so an iso-level through it is a smooth
-        # curve. It resamples the existing field; it adds no new information.
-        method="cubic",
+        method="linear",
         bounds_error=False,
         fill_value=0.0,
     )
@@ -278,12 +269,8 @@ def generate_risk_surface_png(
     # coarse source leaves along band edges. Sigma is deliberately small (about
     # one visualization cell) so the risk PATTERN is untouched -- it softens
     # edges, it does not move or flatten maxima.
-    # Smoothing is scaled to the RENDER grid (about one visualization cell wide)
-    # so band boundaries are curved at the resolution actually displayed. It
-    # softens edges only: maxima are not moved or flattened, and the value at
-    # any point still comes from the model field.
     render_vals = np.clip(
-        gaussian_filter(render_vals, sigma=max(4.0, render_h / float(h) * 1.5)),
+        gaussian_filter(render_vals, sigma=max(1.0, render_h / float(h) * 0.5)),
         0.0, 1.0,
     )
 

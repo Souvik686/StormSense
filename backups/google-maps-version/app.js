@@ -195,23 +195,9 @@
 
         // Area selection depends on this. Google panTo animates, giving the
         // Leaflet flyTo behaviour the call sites expect.
-        // Leaflet flyTo is an ANIMATED but ATOMIC move: the target centre and
-        // zoom are reached together.
-        //
-        // Mapping it to panTo() + setZoom() was subtly wrong and caused the
-        // "Live Location needs two clicks" bug. panTo() animates; the setZoom()
-        // issued on the very next line interrupted that animation, and while
-        // the map was still mid-flight Google's `restriction` box re-clamped
-        // the centre. The first click therefore landed somewhere between the
-        // old and new positions, and only a second click -- starting from
-        // closer in, with a shorter pan -- arrived at the real coordinates.
-        //
-        // Setting zoom FIRST and then centring instantaneously makes the move
-        // deterministic: one call, one final position, no animation for a
-        // later call to interrupt. Panning by hand is unaffected.
         flyTo: function (center, zoom) {
+          gmap.panTo(toLatLng(center));
           if (zoom != null) gmap.setZoom(zoom);
-          gmap.setCenter(toLatLng(center));
           return this;
         },
 
@@ -331,83 +317,28 @@
         _gmap: null,
         _imageType: null,
         _opacity: options.opacity != null ? options.opacity : 1.0,
-        // OVERZOOM (CHANGE 4).
-        //
-        // RainViewer publishes radar only to maxNativeZoom (7). This used to
-        // `return null` above that zoom, so the radar VANISHED the moment the
-        // user zoomed past 7 -- the reported "radar disappears when zooming in".
-        //
-        // Leaflet's behaviour, reproduced here, is to keep displaying the
-        // deepest available tile, magnified. Google's ImageMapType cannot
-        // upscale, so tiles are built as DOM nodes: beyond maxNativeZoom we
-        // fetch the ANCESTOR tile at maxNativeZoom and position/scale it with
-        // CSS so the correct quarter of it fills the requested tile. The
-        // imagery stays geographically aligned at every zoom; it simply gets
-        // blockier, which is honest -- no radar detail is invented.
         _build: function () {
           var self = this;
-          var maxNative = options.maxNativeZoom;
-
-          return {
-            tileSize: new google.maps.Size(256, 256),
-            maxZoom: options.maxZoom || 18,
-            name: options.attribution || '',
-            getTile: function (coord, zoom, ownerDocument) {
-              var div = ownerDocument.createElement('div');
-              div.style.width = '256px';
-              div.style.height = '256px';
-              div.style.overflow = 'hidden';
-              div.style.position = 'relative';
-              if (coord == null) return div;
-
+          return new google.maps.ImageMapType({
+            getTileUrl: function (coord, zoom) {
               var n = 1 << zoom;
-              if (coord.y < 0 || coord.y >= n) return div;
+              // Google does not wrap tile coords; Leaflet does.
               var x = ((coord.x % n) + n) % n;
-              var y = coord.y;
-              var z = zoom;
-              var scale = 1, offX = 0, offY = 0;
-
-              if (maxNative != null && zoom > maxNative) {
-                // Walk up to the deepest published ancestor tile.
-                var dz = zoom - maxNative;
-                var factor = 1 << dz;             // tiles per ancestor per axis
-                var ax = Math.floor(x / factor);
-                var ay = Math.floor(y / factor);
-                scale = factor;                    // magnification
-                // Which sub-tile of the ancestor this request represents.
-                offX = (x - ax * factor) * 256;
-                offY = (y - ay * factor) * 256;
-                x = ax; y = ay; z = maxNative;
+              if (coord.y < 0 || coord.y >= n) return null;
+              if (options.maxNativeZoom != null && zoom > options.maxNativeZoom) {
+                return null; // source has no tiles beyond its real zoom
               }
-
-              var url = urlTemplate
-                .replace('{z}', z)
+              return urlTemplate
+                .replace('{z}', zoom)
                 .replace('{x}', x)
-                .replace('{y}', y)
+                .replace('{y}', coord.y)
                 .replace('{s}', 'a');
-
-              var img = ownerDocument.createElement('img');
-              img.src = url;
-              img.style.position = 'absolute';
-              img.style.width = (256 * scale) + 'px';
-              img.style.height = (256 * scale) + 'px';
-              img.style.left = (-offX) + 'px';
-              img.style.top = (-offY) + 'px';
-              img.style.imageRendering = 'auto';
-              img.style.pointerEvents = 'none';
-              // A missing frame must not paint a broken-image glyph over the map.
-              img.onerror = function () { img.style.display = 'none'; };
-              div.appendChild(img);
-
-              div.style.opacity = String(self._opacity);
-              return div;
             },
-            releaseTile: function (tile) {
-              if (!tile) return;
-              var imgs = tile.getElementsByTagName('img');
-              for (var i = 0; i < imgs.length; i++) { imgs[i].src = ''; }
-            }
-          };
+            tileSize: new google.maps.Size(256, 256),
+            opacity: self._opacity,
+            maxZoom: options.maxZoom || 18,
+            name: options.attribution || ''
+          });
         },
         addTo: function (lMap) {
           var gm = (lMap && lMap._gmap) ? lMap._gmap : lMap;
@@ -421,21 +352,7 @@
         },
         setOpacity: function (o) {
           this._opacity = o;
-          // The overzoom-capable map type is a plain object with getTile(), not
-          // a google.maps.ImageMapType, so it has no setOpacity(). Opacity is
-          // applied per tile from _opacity; already-rendered tiles are updated
-          // in place so the change is immediate rather than waiting for a pan.
-          if (this._imageType && typeof this._imageType.setOpacity === 'function') {
-            this._imageType.setOpacity(o);
-          } else if (this._gmap && this._gmap.getDiv()) {
-            var host = this._gmap.getDiv();
-            var tiles = host.querySelectorAll('div[style*="256px"]');
-            for (var i = 0; i < tiles.length; i++) {
-              if (tiles[i].getElementsByTagName('img').length) {
-                tiles[i].style.opacity = String(o);
-              }
-            }
-          }
+          if (this._imageType) this._imageType.setOpacity(o);
           return this;
         },
         setMap: function (m) { if (m === null) this.remove(); return this; },
@@ -900,30 +817,7 @@
   // element is the CURRENT LOCATION heading and is owned by applyLiveLocation();
   // overwriting it here made the panel say "West Bengal" while simultaneously
   // reporting that the current location was unavailable.
-  /**
-   * Keep the hazard cards' scope line truthful for the SELECTED AREA.
-   *
-   * The three cards were hardcoded to "... Hazard · West Bengal peak". Once an
-   * area is selected the backend aggregates over that district only, so the
-   * label would otherwise claim a state-wide peak while showing one district's
-   * value. Text only -- no metric, value, unit or status indicator changes.
-   */
-  function applyAreaScopeLabels() {
-    var d = window.activeDistrict();
-    var scope = (d && d !== "West Bengal") ? d : "West Bengal peak";
-    [["kpi-ts-scope", "Atmospheric Hazard"],
-     ["kpi-rain-scope", "Precipitation Hazard"],
-     ["kpi-ff-scope", "Hydrological Hazard"]].forEach(function (pair) {
-      var el = document.getElementById(pair[0]);
-      if (el) el.textContent = pair[1] + " · " + scope;
-    });
-    var areaEl = document.getElementById("selected-area-name");
-    if (areaEl) areaEl.textContent = (d && d !== "West Bengal") ? d : "Whole State";
-  }
-  window.applyAreaScopeLabels = applyAreaScopeLabels;
-
   function applyRegionState(summary) {
-    applyAreaScopeLabels();
     var el = document.getElementById("active-high-risk-area");
     if (!el) return;
 
@@ -1143,35 +1037,12 @@
   // Live Surface Observation & Data Health Ingest (Every 60 Seconds)
   // -----------------------------------------------------------------------------
   window.fetchLiveSurfaceData = function (isManual) {
-    return fetch(API_BASE + "/api/live/surface" + areaCoordQS())
+    return fetch(API_BASE + "/api/live/surface")
       .then(parseJson)
       .then(function (data) {
         if (!data) return;
         window.StormSenseLiveSurface = data;
-
-        // OBSERVED TIMESTAMP MUST NOT GO BACKWARDS (CHANGE 5).
-        //
-        // The upstream station API can return slightly different observation
-        // timestamps between calls (it serves whichever scan its edge has).
-        // Measured: a refresh replaced an 06:30:05 observation with 06:25:26,
-        // so "OBSERVED: 2m ago" jumped BACKWARDS to "7m ago" -- the display
-        // aged instead of refreshing.
-        //
-        // The newest observation actually seen wins. This never invents a
-        // timestamp: it only refuses to adopt an older one than is already
-        // displayed, so the header stays monotonic and consistent with the
-        // clock. A genuinely newer scan is adopted immediately.
-        var incoming = data.observed_at_utc ? Date.parse(data.observed_at_utc) : NaN;
-        var held = window.currentObsTime ? Date.parse(window.currentObsTime) : NaN;
-        if (!isNaN(incoming) && (isNaN(held) || incoming >= held)) {
-          window.currentObsTime = data.observed_at_utc;
-        } else if (isNaN(held)) {
-          window.currentObsTime = data.observed_at_utc;
-        }
-        // Re-stamp the header immediately rather than waiting for the next
-        // 1s clock tick, so a manual Refresh shows its effect at once.
-        if (typeof updateIstClock === "function") updateIstClock();
-
+        window.currentObsTime = data.observed_at_utc;
         var obs = data.observations || {};
 
         if (window.stormSenseMode === "live") {
@@ -1207,7 +1078,7 @@
 
     return Promise.all([
       window.fetchLiveSurfaceData(false).catch(function() { return null; }),
-      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead + modeQS + districtQS()).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/districts?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/high-risk-cells?lead=" + lead + "&top_k=8" + modeQS).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/xai" + "?mode=" + (window.stormSenseMode || "live") + "&lead=" + apiLeadHours()).then(parseJson).catch(function () { return null; }),
@@ -1560,7 +1431,7 @@
         : fetch(API_BASE + "/api/weather/current").then(parseJson).catch(function () { return null; });
     var fetchSurface = (window.stormSenseMode === "historical") 
         ? Promise.resolve(null) 
-        : fetch(API_BASE + "/api/live/surface" + areaCoordQS()).then(parseJson).catch(function () { return null; });
+        : fetch(API_BASE + "/api/live/surface").then(parseJson).catch(function () { return null; });
 
     return Promise.all([
       fetchCurrent,
@@ -2762,41 +2633,6 @@
   function renderNowcast(timeline) {
     var root = document.getElementById("nowcast-steps");
     if (!root || !timeline || !timeline.length) return;
-
-    // OWNERSHIP OF #nowcast-steps.
-    //
-    // This strip is the "Current observed conditions" panel. renderNowcast()
-    // (the 0-6 hour forecast row) and renderNowcastLive() (observed conditions)
-    // both painted into the SAME container, so whichever ran last won and the
-    // panel flipped between the two depending on load order and which horizon
-    // was clicked.
-    //
-    // Per the product decision the strip always shows CURRENT OBSERVED
-    // CONDITIONS, so the forecast row no longer writes here. Nothing is lost:
-    // the 0-6 hour forecast remains fully available through the horizon
-    // buttons, the risk map, the hazard cards, the popup and the legend --
-    // this function simply stops hijacking the observation strip.
-    //
-    // The timeline payload is still kept on window for any consumer that wants
-    // it, so no data is discarded.
-    window.StormSenseTimeline = timeline;
-
-    // Repaint the strip with CURRENT OBSERVED CONDITIONS instead. Without this
-    // the strip was simply left as-is when a forecast horizon was selected,
-    // so it kept the stale "0-6 hour outlook" heading with no cards under it.
-    // The observed values are the same in every horizon (they are observations,
-    // not forecasts); only the map, hazard cards and popup follow the horizon.
-    if (window.stormSenseMode === "live" && window.StormSenseLiveSurface
-        && typeof renderNowcastLive === "function") {
-      renderNowcastLive(window.StormSenseLiveSurface);
-    }
-    return;
-  }
-
-  /** Retained for reference; not wired to #nowcast-steps any more. */
-  function renderNowcastForecastRow(timeline) {
-    var root = document.getElementById("nowcast-steps");
-    if (!root || !timeline || !timeline.length) return;
     var activeLead = window.currentLeadHours || 2;
 
     // These cards are MODEL PREDICTIONS carrying future valid times. The badge
@@ -3464,25 +3300,19 @@
     // product and is drawn as station markers on top, so model risk and real
     // observations stay visually and semantically distinct.
     if (leadHours === 'now') {
-      // CHANGE 6: the Interactive Nowcasting Map shows the STORMSENSE MODEL
-      // RISK field in BOTH modes, at every horizon including NOW/T0.
-      //
-      // Historical NOW previously painted the ERA5 OBSERVED RAINFALL analysis
-      // here (a blue/cyan mm/h field). That is a legitimate product, but it is
-      // a different quantity from model risk, so the case study's risk map did
-      // not look or behave like the risk map everywhere else on the site.
-      //
-      // The backend serves a real historical lead=0 risk surface -- a separate
-      // inference, verified byte-distinct from lead=2, not a relabelled +2h --
-      // so historical NOW now uses the same risk painter as live NOW and as
-      // +2/+4/+6. The observed rainfall field remains available as its own
-      // clearly-labelled product on the Radar & Satellite Feeds view
-      // (initRadarMap/renderHistoricalAnalysisSurface), which is where an
-      // observation belongs. The two are never drawn on top of each other.
+      if (window.stormSenseMode === "historical") {
+        // Historical NOW is the case study's OBSERVED t=0 reanalysis state --
+        // a different quantity (mm/h observed, not % risk), so it keeps its own
+        // layer. See /api/historical/analysis-surface.
+        removeRiskSurface(mapInstance);
+        removeObservationSurface(mapInstance);
+        renderHistoricalAnalysisSurface(mapInstance);
+        return;
+      }
       removeHistoricalAnalysisSurface(mapInstance);
-      removeObservationSurface(mapInstance);
       // Fall through to the shared risk-surface painter with the model's real
-      // lead=0 field, so NOW is visually consistent with the forecast horizons.
+      // lead=0 field. The surface layer is the same one +2/+4/+6 use, so NOW is
+      // visually consistent with the forecast horizons.
     }
 
     // Any forecast horizon drops the historical t=0 analysis layer, so an
@@ -3794,27 +3624,27 @@
     var prov = document.getElementById("obs-provenance");
     if (prov) prov.classList.add("hidden");
 
-    // CHANGE 6: historical NOW now paints the STORMSENSE MODEL RISK field at
-    // lead 0, exactly like live NOW, so its legend is the risk legend. The
-    // observed ERA5 rainfall analysis is a separate product and keeps its own
-    // blue/teal legend on the Radar & Satellite Feeds view.
+    // Historical NOW is NOT the model risk field: renderContinuousRiskSurface()
+    // paints the case study's OBSERVED ERA5 rainfall analysis there (mm/h, not
+    // %). Labelling that "MODEL T0 ... RISK" would describe a product the map is
+    // not drawing, so historical NOW keeps its own observation legend.
     var isHistoricalNow = isNow && (window.stormSenseMode === "historical");
 
     if (isHistoricalNow) {
-      if (title) title.textContent = "CYCLONE REMAL · MODEL T0 RISK (26 MAY 2024 12:00 UTC)";
+      if (title) title.textContent = "CYCLONE REMAL · OBSERVED RAINFALL (t=0)";
       if (pills) {
-        // Same probability bands as every other horizon
-        // (NowcastService._level_for_prob: 0.25 / 0.50 / 0.75).
+        // Matches the blue/teal observation ramp the historical analysis
+        // surface renders -- deliberately NOT the green-to-red risk ramp.
         pills.innerHTML =
-          '<span class="px-2 py-0.5 bg-emerald-500 text-slate-950 rounded">&lt;25% Normal</span>' +
-          '<span class="px-2 py-0.5 bg-amber-500 text-slate-950 rounded">25–50% Watch</span>' +
-          '<span class="px-2 py-0.5 bg-orange-500 text-white rounded">50–75% Alert</span>' +
-          '<span class="px-2 py-0.5 bg-red-500 text-white rounded">≥75% Warning</span>';
+          '<span class="px-2 py-0.5 rounded text-slate-950" style="background:#cffafe;">Trace</span>' +
+          '<span class="px-2 py-0.5 rounded text-slate-950" style="background:#67e8f9;">Light</span>' +
+          '<span class="px-2 py-0.5 rounded text-slate-950" style="background:#22d3ee;">Moderate</span>' +
+          '<span class="px-2 py-0.5 rounded text-white" style="background:#0891b2;">Heavy</span>' +
+          '<span class="px-2 py-0.5 rounded text-white" style="background:#155e75;">Very heavy</span>';
       }
       if (sub) {
-        sub.textContent = "StormSense model risk valid at case-study T0 "
-          + "· 26 May 2024 12:00 UTC · observed rainfall is a separate "
-          + "product on the Radar view";
+        sub.textContent = "ERA5 reanalysis · observed rainfall rate (mm/h) at "
+          + "26 May 2024 12:00 UTC · an observation, not a forecast";
       }
     } else if (isNow) {
       // Live NOW paints the model's lead=0 risk field, so the legend describes
@@ -4443,7 +4273,7 @@
       // this block deliberately does not repaint it.
       var nowModeQS = "&mode=" + (window.stormSenseMode || "live");
       return Promise.all([
-        fetch(API_BASE + "/api/nowcast/summary?lead=0" + nowModeQS + districtQS()).then(parseJson).catch(function () { return null; }),
+        fetch(API_BASE + "/api/nowcast/summary?lead=0" + nowModeQS).then(parseJson).catch(function () { return null; }),
         fetch(API_BASE + "/api/nowcast/districts?lead=0" + nowModeQS).then(parseJson).catch(function () { return null; }),
         fetch(API_BASE + "/api/nowcast/high-risk-cells?lead=0&top_k=8" + nowModeQS).then(parseJson).catch(function () { return null; }),
         fetch(API_BASE + "/api/nowcast/xai?lead=0" + nowModeQS).then(parseJson).catch(function () { return null; })
@@ -4525,7 +4355,7 @@
     var modeQS = "&mode=" + (window.stormSenseMode || "live");
 
     return Promise.all([
-      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead + modeQS + districtQS()).then(parseJson).catch(function () { return null; }),
+      fetch(API_BASE + "/api/nowcast/summary?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/districts?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/risk-map?lead=" + lead + modeQS).then(parseJson).catch(function () { return null; }),
       fetch(API_BASE + "/api/nowcast/high-risk-cells?lead=" + lead + "&top_k=8" + modeQS).then(parseJson).catch(function () { return null; }),
@@ -4919,33 +4749,7 @@
     // Map navigation. Options come from the real boundary dataset, so every
     // entry resolves to genuine coordinates. Moving the viewport never changes
     // the monitored region, the forecast, or any displayed risk value.
-    // Restore the area/horizon carried across a hard Refresh, so the button
-    // behaves like Ctrl+Shift+R without dumping the user back at the default
-    // view. Both values are read from the URL written by window.manualRefresh.
-    loadSupportedAreas().then(function () {
-      var qs = new URLSearchParams(window.location.search);
-      var wantLead = qs.get("lead");
-      var wantArea = qs.get("area");
-      // The map must exist before jumpToArea can move it, and the horizon must
-      // be applied AFTER the area so the area's pipeline run is not overwritten
-      // by a whole-state one. A short defer covers initMap() completing.
-      setTimeout(function () {
-        if (wantArea) {
-          var sel = document.getElementById("sector-selector");
-          if (sel) sel.value = wantArea;
-          // jumpToArea re-runs the horizon pipeline for the restored area and
-          // sets StormSenseSelectedArea/SelectedDistrict.
-          window.jumpToArea(wantArea);
-        }
-        if (wantLead != null && typeof window.setForecastHorizon === "function") {
-          var n = Number(wantLead);
-          if (isFinite(n)) {
-            setTimeout(function () { window.setForecastHorizon(null, null, n); }, 900);
-          }
-        }
-      }, 1200);
-    }).catch(function () { return null; });
-
+    loadSupportedAreas();
     var sectorSelect = document.getElementById("sector-selector");
     if (sectorSelect) {
       sectorSelect.addEventListener("change", function () {
@@ -5008,93 +4812,15 @@
       window.stormSenseMap.flyTo(area.center, 9);
     }
 
-    // SELECTED AREA becomes the active spatial context (CHANGE 2B).
-    //
-    // This used to be "a viewport change only": the map moved but every
-    // dashboard card, hazard value and forecast number kept the previously
-    // selected area's data, so choosing Kolkata after Murshidabad left
-    // Murshidabad's numbers under a Kolkata-centred map.
-    //
-    // The backend already aggregates by district (/api/nowcast/summary and
-    // /api/nowcast/districts both accept ?district=), so the selection is
-    // recorded as state here and the existing horizon pipeline is re-run
-    // against it. No values are computed in the frontend.
-    //
-    // NOTE: this is the SELECTED AREA, deliberately separate from the user's
-    // real Current Location (window.StormSenseUserLocation), which is owned by
-    // the geolocation path and must not be overwritten by an area jump.
-    window.StormSenseSelectedArea = {
-      id: area.id,
-      name: area.name,
-      kind: area.kind,
-      center: area.center || null,
-      hasModelCoverage: area.has_model_coverage !== false
-    };
-    // "whole-state" means the domain-wide peak, which is what the backend
-    // returns for the default district name.
-    window.StormSenseSelectedDistrict =
-      (area.kind === "state") ? "West Bengal" : area.name;
-
+    // Jumping must not disturb the forecast field, the horizon, or the live
+    // location marker -- it is a viewport change only.
     if (!area.has_model_coverage) {
       window.showToast(area.name + ": no model grid coverage for this area", "warning");
     } else {
-      window.showToast("Loading " + area.name + " forecast...", "radar");
-    }
-
-    // Repaint every location-dependent component for the CURRENT horizon, so
-    // location and horizon stay synchronised (CHANGE 2C).
-    if (typeof window.setForecastHorizon === "function") {
-      var curLead = (window.currentLeadHours === "now" || window.currentLeadHours == null)
-        ? 0 : window.currentLeadHours;
-      window.setForecastHorizon(null, null, curLead);
-      // The observed-conditions strip is fed by /api/live/surface, which is
-      // keyed on coordinates rather than district, so it needs its own re-fetch
-      // for the newly selected area (setForecastHorizon does not pull it).
-      if (window.stormSenseMode === "live"
-          && typeof window.fetchLiveSurfaceData === "function") {
-        window.fetchLiveSurfaceData(true);
-      }
+      window.showToast("Map centred on " + area.name, "radar");
     }
     return true;
   };
-
-  /**
-   * The single authoritative district for every location-dependent request.
-   *
-   * Returns the user's selected area when one is active, otherwise the
-   * domain-wide default. Every fetch that accepts ?district= routes through
-   * this, so no component can independently invent its own spatial context.
-   */
-  window.activeDistrict = function () {
-    return window.StormSenseSelectedDistrict || "West Bengal";
-  };
-
-  /** Query-string fragment carrying the active district, or "" for the default. */
-  function districtQS() {
-    var d = window.activeDistrict();
-    return (d && d !== "West Bengal") ? "&district=" + encodeURIComponent(d) : "";
-  }
-
-  /**
-   * Coordinates of the SELECTED AREA for point/observation endpoints.
-   *
-   * /api/live/surface takes lat/lon and returns the station observation nearest
-   * those coordinates -- verified to differ genuinely by location (Darjeeling
-   * 21.4 C vs Bankura 33.1 C at the same instant). Without this the observed
-   * conditions strip stayed on the default station no matter which area was
-   * selected.
-   *
-   * Returns "" for the whole-state selection so the backend keeps its own
-   * default station, and "?" (not "&") because these endpoints take no other
-   * query parameters at these call sites.
-   */
-  function areaCoordQS() {
-    var a = window.StormSenseSelectedArea;
-    if (!a || !a.center || a.kind === "state") return "";
-    var lat = Number(a.center[0]), lon = Number(a.center[1]);
-    if (!isFinite(lat) || !isFinite(lon)) return "";
-    return "?lat=" + lat.toFixed(4) + "&lon=" + lon.toFixed(4);
-  }
 
   // ---------------------------------------------------------------------------
   // Unified refresh control (single timer, single manual trigger)
@@ -5102,47 +4828,6 @@
   var manualRefreshInFlight = false;
 
   window.manualRefresh = function () {
-    if (manualRefreshInFlight) return Promise.resolve();
-    manualRefreshInFlight = true;
-
-    // FULL RELOAD, as requested: the Refresh button should do what
-    // Ctrl+Shift+R does -- re-ingest on the server, then rebuild the whole page
-    // from scratch rather than patching individual panels in place.
-    //
-    // This is what clears every stale frontend state variable (cached summary,
-    // held observation timestamp, painted cards), which in-place repainting
-    // could not fully guarantee. The selected area and horizon are carried
-    // across the reload in the URL so the user lands back where they were
-    // instead of being reset to the default view.
-    var btnEl = document.getElementById("btn-manual-refresh");
-    var iconEl = document.getElementById("manual-refresh-icon");
-    if (btnEl) btnEl.disabled = true;
-    if (iconEl) iconEl.classList.add("animate-spin");
-
-    var reingest = (window.stormSenseMode === "live")
-      ? fetch(API_BASE + "/api/live/refresh", { method: "POST" })
-          .then(parseJson).catch(function () { return null; })
-      : Promise.resolve(null);
-
-    return reingest.then(function () {
-      var params = new URLSearchParams();
-      if (window.stormSenseMode === "historical") params.set("mode", "historical");
-      var area = window.StormSenseSelectedArea;
-      if (area && area.id && area.id !== "whole-state") params.set("area", area.id);
-      var lead = window.currentLeadHours;
-      params.set("lead", (lead === "now" || lead == null) ? "0" : String(lead));
-      // Cache-bust so the browser cannot serve a stale document or bundle --
-      // the equivalent of the hard reload this button now performs.
-      params.set("_r", String(Date.now()));
-      window.location.replace(
-        window.location.pathname + "?" + params.toString());
-    }).catch(function () {
-      window.location.reload();
-    });
-  };
-
-  /** Legacy in-place refresh, kept for the auto-refresh timer. */
-  window.softRefresh = function () {
     if (manualRefreshInFlight) return Promise.resolve();
     manualRefreshInFlight = true;
 
