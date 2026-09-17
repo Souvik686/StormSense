@@ -143,7 +143,7 @@ class NowcastService:
             checkpoint_path = v2_cal if os.path.exists(v2_cal) else (v2_base if os.path.exists(v2_base) else v1_base)
 
         self.predictor = get_predictor(checkpoint_path, config_path)
-        self.lead_times = self.predictor.lead_times
+        self.lead_times = [0] + list(self.predictor.lead_times)
         self.stats = self.predictor.stats
 
         # 2. Domain Coordinates
@@ -261,23 +261,39 @@ class NowcastService:
                     self.current_valid_time = str(vt)[:19] + "Z"
 
                 # Run inference on the operational atmospheric window
-                with torch.no_grad():
-                    batch = {
-                        "surface": sample["surface"][None].to(self.predictor.device),
-                        "pressure_wind": sample["pressure_wind"][None].to(self.predictor.device),
-                        "pressure_thermo": sample["pressure_thermo"][None].to(self.predictor.device),
-                        "dem": sample["dem"][None].to(self.predictor.device),
-                    }
-                    preds = self.predictor.model(batch)
+                # We need T=0 risk as well. The model outputs for +2h...+6h.
+                # To get risk valid at T=0, we run inference on the sample from T-2h.
+                sample_t2 = dataset[sample_idx - 2]
+                
+                def _infer(s):
+                    with torch.no_grad():
+                        batch = {
+                            "surface": s["surface"][None].to(self.predictor.device),
+                            "pressure_wind": s["pressure_wind"][None].to(self.predictor.device),
+                            "pressure_thermo": s["pressure_thermo"][None].to(self.predictor.device),
+                            "dem": s["dem"][None].to(self.predictor.device),
+                        }
+                        return self.predictor.model(batch)
 
-                logits = preds["severe_weather_logit"][0]
-                if self.predictor.temperature is not None:
-                    T = torch.tensor(self.predictor.temperature, device=logits.device, dtype=logits.dtype).view(-1, 1, 1)
-                    severe_prob = torch.sigmoid(logits / T).cpu().numpy()
-                else:
-                    severe_prob = torch.sigmoid(logits).cpu().numpy()
+                preds = _infer(sample)
+                preds_now = _infer(sample_t2)
+
+                def _get_prob(p):
+                    logits = p["severe_weather_logit"][0]
+                    if self.predictor.temperature is not None:
+                        T = torch.tensor(self.predictor.temperature, device=logits.device, dtype=logits.dtype).view(-1, 1, 1)
+                        return torch.sigmoid(logits / T).cpu().numpy()
+                    return torch.sigmoid(logits).cpu().numpy()
+
+                severe_prob = _get_prob(preds)
+                severe_prob_now = _get_prob(preds_now)
+                
+                # Prepend the +2h output from T-2h prediction as the T=0 output for the current prediction
+                severe_prob = np.concatenate([severe_prob_now[0:1], severe_prob], axis=0)
 
                 rain_pred = preds["rain_3h_mm"][0].cpu().numpy()
+                rain_pred_now = preds_now["rain_3h_mm"][0].cpu().numpy()
+                rain_pred = np.concatenate([rain_pred_now[0:1], rain_pred], axis=0)
 
                 # Binary classification using calibrated per-lead thresholds
                 if self.predictor.threshold_per_lead is not None:
@@ -456,21 +472,31 @@ class NowcastService:
             from datetime import datetime, timezone
             if target_t0 is None:
                 target_t0 = datetime.now(timezone.utc)
+            import datetime
+            from datetime import timedelta
+            
             harmonized = gfs_live.fetch_and_harmonize(self.lats, self.lons, target_t0=target_t0)
-
-            # NowcastPredictor.predict() performs normalization + derived-feature
-            # construction (wind speed, dewpoint depression, temporal encodings,
-            # V2 tri-stream split) internally from raw physical-unit arrays --
-            # this is the same call path any raw ERA5-shaped input would use.
             preds_dict = self.predictor.predict(
                 surface=harmonized.surface,
                 pressure=harmonized.pressure,
                 dem=self._get_static_dem_meters(),
                 timestamp=harmonized.t0.isoformat(),
             )
-
-            severe_prob = preds_dict["severe_weather_prob"]
-            rain_pred = preds_dict["rain_3h_mm_pred"]
+            
+            # Fetch for T-2h to get the valid T=0 prediction (lead 2)
+            harmonized_now = gfs_live.fetch_and_harmonize(self.lats, self.lons, target_t0=target_t0 - timedelta(hours=2))
+            preds_dict_now = self.predictor.predict(
+                surface=harmonized_now.surface,
+                pressure=harmonized_now.pressure,
+                dem=self._get_static_dem_meters(),
+                timestamp=harmonized_now.t0.isoformat(),
+            )
+            
+            import numpy as np
+            severe_prob = np.concatenate([preds_dict_now["severe_weather_prob"][0:1], preds_dict["severe_weather_prob"]], axis=0)
+            rain_pred = np.concatenate([preds_dict_now["rain_3h_mm_pred"][0:1], preds_dict["rain_3h_mm_pred"]], axis=0)
+            severe_binary = np.concatenate([preds_dict_now["severe_weather_binary"][0:1], preds_dict["severe_weather_binary"]], axis=0)
+            
             dem_norm = self._live_dem_norm if self._live_dem_norm is not None else np.zeros(
                 (len(self.lats), len(self.lons)), dtype=np.float32
             )
@@ -479,7 +505,13 @@ class NowcastService:
             self.live_pred = {
                 "severe_weather_prob": severe_prob,
                 "rain_3h_mm_pred": rain_pred,
-                "severe_weather_binary": preds_dict["severe_weather_binary"],
+                # Must be the CONCATENATED array. Every other field here carries
+                # the prepended T=0 slice, so storing the raw 5-lead
+                # preds_dict["severe_weather_binary"] left this one array a slice
+                # short: self.lead_times is [0,2,3,4,5,6], so lead=6 resolves to
+                # index 5 and raised IndexError (size 5) in
+                # predictions_to_geojson -- a 500 on the +6h risk map only.
+                "severe_weather_binary": severe_binary,
                 "flash_flood_risk": compound["flash_flood_risk"],
                 "overall_risk": compound["overall_risk"],
                 "lead_times_hours": self.lead_times,

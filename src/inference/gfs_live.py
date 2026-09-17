@@ -250,6 +250,17 @@ def fetch_gfs_slice(cycle_time: datetime, f_hour: int, lats: np.ndarray, lons: n
     """Fetch and regrid every required surface + pressure-level message for one
     real GFS f000 analysis cycle. Raises GfsFetchError naming the exact missing
     variable if anything required is unavailable -- never substitutes a guess."""
+
+    cache_dir = os.path.join(os.path.dirname(__file__), "..", "..", "processed", "cache", "gfs")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{cycle_time.strftime('%Y%m%d_%H%M%S')}_{f_hour}.pkl")
+    if os.path.exists(cache_file):
+        try:
+            import pickle
+            with open(cache_file, 'rb') as f_cache:
+                return pickle.load(f_cache)
+        except Exception as e:
+            pass
     last_err: Optional[Exception] = None
     for base in (AWS_BASE, NOMADS_BASE):
         try:
@@ -284,6 +295,12 @@ def fetch_gfs_slice(cycle_time: datetime, f_hour: int, lats: np.ndarray, lons: n
                             arr = arr * GRAVITY_M_S2  # geopotential height (m) -> geopotential (m^2/s^2)
                         cycle.pressure[var_key][lvl] = arr
 
+                try:
+                    import pickle
+                    with open(cache_file, 'wb') as f_cache:
+                        pickle.dump(cycle, f_cache)
+                except Exception:
+                    pass
                 return cycle
         except (GfsFetchError, httpx.HTTPError) as e:
             last_err = e
