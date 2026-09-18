@@ -4,7 +4,76 @@
 <title>StormSense | AI Severe Weather Early Warning</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="css/styles.css" rel="stylesheet">
-<script src="https://maps.googleapis.com/maps/api/js?key=GOOGLE_MAPS_API_KEY_PLACEHOLDER&libraries=geometry"></script>
+<script>
+/* Google Maps loader with per-key failover.
+ *
+ * Google applies a DAILY QUOTA PER KEY. When a key is exhausted the SDK does not
+ * fail the network request -- every script still returns HTTP 200 -- it invokes
+ * window.gm_authFailure() and paints its own "Oops! Something went wrong" panel
+ * over the map. A single static <script src=...> therefore loses the map for the
+ * rest of the day with no way to recover.
+ *
+ * This loader injects the SDK programmatically from an ordered key list and, on
+ * gm_authFailure (or a script load error), removes the failed SDK and retries
+ * with the next key. Keys are injected server-side by serve_dashboard().
+ */
+window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
+(function () {
+  var keys = Array.isArray(window.STORMSENSE_MAPS_KEYS) ? window.STORMSENSE_MAPS_KEYS.slice() : [];
+  if (!keys.length) { console.error("[maps] no Google Maps key configured"); return; }
+  var idx = 0;
+  window.STORMSENSE_MAPS_KEY_STATE = { total: keys.length, activeIndex: 0, failed: [] };
+
+  function cleanup() {
+    // Drop the half-initialised SDK so the next key starts from a clean slate.
+    try { delete window.google; } catch (e) { window.google = undefined; }
+    var old = document.getElementById("gmaps-sdk");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+  }
+
+  function load() {
+    if (idx >= keys.length) {
+      console.error("[maps] all " + keys.length + " Google Maps key(s) failed (quota or auth).");
+      window.STORMSENSE_MAPS_EXHAUSTED = true;
+      document.dispatchEvent(new CustomEvent("stormsense:maps-exhausted"));
+      return;
+    }
+    window.STORMSENSE_MAPS_KEY_STATE.activeIndex = idx;
+    var s = document.createElement("script");
+    s.id = "gmaps-sdk";
+    s.async = true;
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(keys[idx]) +
+            "&libraries=geometry&callback=__stormsenseMapsReady";
+    s.onerror = function () { failover("script load error"); };
+    document.head.appendChild(s);
+  }
+
+  function failover(reason) {
+    var badIdx = idx;
+    window.STORMSENSE_MAPS_KEY_STATE.failed.push({ index: badIdx, reason: reason });
+    console.warn("[maps] key #" + (badIdx + 1) + "/" + keys.length + " failed (" + reason + ")");
+    idx += 1;
+    if (idx < keys.length) {
+      console.warn("[maps] failing over to key #" + (idx + 1) + "/" + keys.length);
+      cleanup();
+      load();
+    } else {
+      load(); // records exhaustion
+    }
+  }
+
+  // Google calls this on quota/auth failure for the CURRENTLY loaded key.
+  window.gm_authFailure = function () { failover("gm_authFailure (quota or invalid key)"); };
+
+  window.__stormsenseMapsReady = function () {
+    window.STORMSENSE_MAPS_READY = true;
+    console.info("[maps] loaded with key #" + (idx + 1) + "/" + keys.length);
+    document.dispatchEvent(new CustomEvent("stormsense:maps-ready"));
+  };
+
+  load();
+})();
+</script>
 <link href="https://fonts.googleapis.com" rel="preconnect">
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
@@ -467,8 +536,8 @@
 <div class="flex items-center flex-wrap gap-2">
   <div class="flex items-center gap-3">
 <div id="horizon-controls" class="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
-<button class="horizon-btn px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer" onclick="window.setForecastHorizon(this, 'now', 0)">NOW</button>
-<button class="horizon-btn px-2.5 py-1 text-xs font-bold rounded-lg bg-cyan-600 text-white shadow-sm transition-colors cursor-pointer" onclick="window.setForecastHorizon(this, '+2h', 2)">+2h</button>
+<button class="horizon-btn px-2.5 py-1 text-xs font-bold rounded-lg bg-cyan-600 text-white shadow-sm transition-colors cursor-pointer" onclick="window.setForecastHorizon(this, 'now', 0)">NOW</button>
+<button class="horizon-btn px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer" onclick="window.setForecastHorizon(this, '+2h', 2)">+2h</button>
 <button class="horizon-btn px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer" onclick="window.setForecastHorizon(this, '+4h', 4)">+4h</button>
 <button class="horizon-btn px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer" onclick="window.setForecastHorizon(this, '+6h', 6)">+6h</button>
 </div>
@@ -509,7 +578,7 @@
 <div class="absolute bottom-4 left-4 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded-xl p-3 shadow-xl z-[500] pointer-events-auto select-none">
 <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono mb-1.5 flex items-center justify-between gap-2">
   <span id="map-legend-title">SEVERE WEATHER RISK</span>
-  <span class="text-cyan-400 font-bold" id="legend-lead-tag">+2h</span>
+  <span class="text-cyan-400 font-bold" id="legend-lead-tag">NOW</span>
 </div>
 <!-- Probability bands use the SAME edges as the model classifier
      (NowcastService._level_for_prob: 0.25 / 0.50 / 0.75), so the legend and the
@@ -533,7 +602,7 @@
 <span class="material-symbols-outlined text-sm">zoom_out_map</span>
 <span id="label-map-domain">WB Focus</span>
 </button>
-<button class="size-9 bg-slate-900/90 hover:bg-cyan-950/80 text-slate-200 hover:text-cyan-400 rounded-xl border border-slate-700 hover:border-cyan-500/50 flex items-center justify-center shadow-lg transition-all relative group cursor-pointer" id="btn-my-location" onclick="window.handleMyLocationClick()" title="Center on Monitored Sector (West Bengal)"><span class="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">my_location</span><span class="absolute -top-1 -right-1 size-2.5 rounded-full bg-cyan-400 ring-2 ring-slate-900 hidden animate-ping" id="my-location-ping"></span></button>
+<button class="size-9 bg-slate-900/90 hover:bg-cyan-950/80 text-slate-200 hover:text-cyan-400 rounded-xl border border-slate-700 hover:border-cyan-500/50 flex items-center justify-center shadow-lg transition-all relative group cursor-pointer" id="btn-my-location" onclick="window.handleMyLocationClick()" title="Use my live location — centres the map on your GPS position and binds the risk panel to your coordinates"><span class="material-symbols-outlined text-lg group-hover:scale-110 transition-transform">my_location</span><span class="absolute -top-1 -right-1 size-2.5 rounded-full bg-cyan-400 ring-2 ring-slate-900 hidden animate-ping" id="my-location-ping"></span></button>
 <button class="size-9 bg-slate-900/90 hover:bg-slate-800 text-slate-200 rounded-xl border border-slate-700 flex items-center justify-center shadow-lg transition-colors cursor-pointer" id="btn-map-zoom-in" title="Zoom In">
 <span class="material-symbols-outlined text-lg">add</span>
 </button>

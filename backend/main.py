@@ -47,11 +47,42 @@ def _google_maps_key() -> str:
     initialised. Both spellings are accepted here so neither the .env nor a
     system environment variable has to be renamed.
     """
-    return (
-        os.getenv("GOOGLEMAPS_API_KEY")
-        or os.getenv("GOOGLE_MAPS_API_KEY")
-        or ""
-    )
+    keys = _google_maps_keys()
+    return keys[0] if keys else ""
+
+
+def _google_maps_keys() -> list:
+    """Ordered list of Google Maps browser keys, primary first.
+
+    Google enforces a PER-KEY daily quota. When a key is exhausted the Maps SDK
+    does not fail the network request -- every script still returns HTTP 200 --
+    it calls `window.gm_authFailure()` and paints its own "Oops! Something went
+    wrong" panel over the map div. Observed on this deployment:
+    "Maps Demo Key limit reached: Your daily quota for Maps JavaScript 2D has
+    been met."
+
+    Supplying more than one key lets the browser fail over to the next one
+    instead of losing the map for the rest of the day. Keys are read from
+    GOOGLE_MAPS_API_KEYS (comma-separated, highest priority) and from the
+    single-key variables, de-duplicated with order preserved.
+
+    Only browser keys belong here: they are served to the page by design and are
+    protected by HTTP-referrer restrictions, not by secrecy.
+    """
+    raw = []
+    multi = os.getenv("GOOGLE_MAPS_API_KEYS") or os.getenv("GOOGLEMAPS_API_KEYS") or ""
+    raw.extend(multi.split(","))
+    raw.append(os.getenv("GOOGLEMAPS_API_KEY") or "")
+    raw.append(os.getenv("GOOGLE_MAPS_API_KEY") or "")
+    for i in range(1, 6):
+        raw.append(os.getenv(f"GOOGLE_MAPS_API_KEY_{i}") or "")
+
+    out = []
+    for k in raw:
+        k = (k or "").strip()
+        if k and k not in out:
+            out.append(k)
+    return out
 
 from src.inference.nowcast_service import (
     get_nowcast_service,
@@ -174,8 +205,15 @@ async def serve_dashboard():
     if os.path.exists(index_path):
         with open(index_path, 'r', encoding='utf-8') as f_idx:
             content = f_idx.read()
-        google_api_key = _google_maps_key()
+        keys = _google_maps_keys()
+        google_api_key = keys[0] if keys else ""
+        # Primary key still substituted for the static tag (kept for any
+        # consumer that reads it), and the FULL ordered list is injected so the
+        # page can fail over to the next key when one hits its daily quota.
         content = content.replace("GOOGLE_MAPS_API_KEY_PLACEHOLDER", google_api_key)
+        content = content.replace(
+            "GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER", json.dumps(keys)
+        )
         return HTMLResponse(content=content)
     raise HTTPException(status_code=404, detail="index.html not found")
 
@@ -218,6 +256,35 @@ async def model_info(svc: NowcastService = Depends(_get_service)):
     info = svc.predictor.model_info()
     info["calibrated_temperatures"] = svc.predictor.temperature
     info["calibrated_thresholds"] = svc.predictor.threshold_per_lead
+
+    # NaN is valid Python and valid in the `json` stdlib, but it is NOT valid
+    # JSON (RFC 8259) and FastAPI's response serializer rejects it -- which made
+    # this endpoint return HTTP 500 for every caller.
+    #
+    # The NaN is genuine, not a computation error: this checkpoint carries no
+    # `best_val_loss` key (its selection metrics are `best_val_score`,
+    # `best_val_pr_auc` and `best_val_csi`), so predictor.model_info() falls back
+    # to `float("nan")`. The honest representation of "this checkpoint does not
+    # record that metric" is null plus a stated reason -- NOT 0.0, and not a
+    # substituted value from a different metric, either of which would read as a
+    # real measured loss.
+    import math as _math
+
+    def _json_safe(v):
+        if isinstance(v, float) and not _math.isfinite(v):
+            return None
+        return v
+
+    unavailable = [k for k, v in info.items()
+                   if isinstance(v, float) and not _math.isfinite(v)]
+    info = {k: _json_safe(v) for k, v in info.items()}
+    if unavailable:
+        info["metrics_unavailable"] = unavailable
+        info["metrics_unavailable_reason"] = (
+            "Not recorded in this checkpoint. v2_calibrated_best.pt stores "
+            "best_val_score / best_val_pr_auc / best_val_csi instead; the "
+            "missing field is reported as null rather than substituted."
+        )
     return info
 
 
@@ -226,12 +293,22 @@ async def model_info(svc: NowcastService = Depends(_get_service)):
 async def get_config():
     """Browser-safe client config ONLY.
 
-    Deliberately narrow: this returns the single Google Maps *browser* key and
-    nothing else. The .env also holds OPENWEATHER_API_KEY, which is a server-side
-    secret and must never be echoed to the browser, so this endpoint never
-    enumerates the environment.
+    Deliberately narrow: this returns the Google Maps *browser* keys and nothing
+    else. The .env also holds OPENWEATHER_API_KEY, which is a server-side secret
+    and must never be echoed to the browser, so this endpoint never enumerates
+    the environment.
+
+    `google_maps_api_keys` is the ordered failover list (primary first). Google
+    enforces a per-key daily quota, and an exhausted key fails inside the SDK
+    (gm_authFailure) rather than as an HTTP error, so the client needs the
+    alternatives up front to recover without a page reload.
     """
-    return {"google_maps_api_key": _google_maps_key()}
+    keys = _google_maps_keys()
+    return {
+        "google_maps_api_key": keys[0] if keys else "",
+        "google_maps_api_keys": keys,
+        "google_maps_key_count": len(keys),
+    }
 
 # ── Live Weather Observations (t=0) ───────────────────────────────────────────
 
@@ -1192,10 +1269,203 @@ async def nowcast_point(
         status = svc.get_live_status()
         inspection["pipeline_status"] = "LIVE (STALE)" if status["is_stale"] else "LIVE"
         inspection["data_freshness"] = status
+        # Observation-evidence layer for NOW (lead 0) only. It reports what
+        # radar and the nearest station are observing AT THIS CELL right now,
+        # next to the model's probability, and never alters that probability.
+        # Restricted to lead 0 on purpose: +2/+4/+6 are forecasts of the future,
+        # and a current observation is not evidence about a future hour.
+        if lead == 0:
+            inspection["now_evidence"] = await _now_evidence_for(
+                svc, lat, lon, inspection
+            )
+            # What the live NOW field actually is. GFS publishes analyses every
+            # 6 h, so the "2 hours earlier" input window usually floors to the
+            # same cycle and NOW comes out identical to +2h. Stated explicitly
+            # instead of presenting a +2h field as a real-time observation.
+            inspection["now_provenance"] = svc.live_now_provenance()
     else:
         inspection["pipeline_status"] = "HISTORICAL CASE STUDY"
+        # Historical is a frozen 2024 replay. Live radar/station observations
+        # describe today and must never be attached to it.
+        inspection["now_evidence"] = {
+            "verdict": "NOT_APPLICABLE",
+            "note": (
+                "Historical case study. Live radar and station observations "
+                "describe the present and are deliberately not attached to a "
+                "frozen past event."
+            ),
+        }
 
     return inspection
+
+
+@app.get("/api/now/provenance", tags=["Live"])
+async def now_provenance(svc: NowcastService = Depends(_get_service)):
+    """THE time-provenance table for NOW: every source with its own real
+    timestamp, and the exact gaps between them.
+
+    This endpoint exists so no consumer has to infer freshness from a single
+    "current time" field. Wall-clock, GFS analysis, radar scan and station
+    observation are four different instants and are returned as four.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    from src.inference import now_evidence as _ne
+    from src.inference.radar_observation import sample_echo_to_grid
+
+    now_utc = _dt.now(_tz.utc).isoformat()
+
+    radar_summary = None
+    radar_time = None
+    try:
+        field = await asyncio.get_running_loop().run_in_executor(
+            None, sample_echo_to_grid, svc.lats, svc.lons
+        )
+        radar_summary = field.to_summary()
+        radar_time = field.frame_time_utc
+    except Exception as e:
+        radar_summary = {"available": False, "error": str(e)}
+
+    station_time = None
+    stations_reporting = 0
+    try:
+        stations, _e = await _get_station_observations()
+        times = [s.observed_at_utc for s in (stations or []) if s.observed_at_utc]
+        stations_reporting = len(stations or [])
+        station_time = max(times) if times else None
+    except Exception:
+        pass
+
+    ref = svc.live_reference_time
+    ana = svc.live_analysis_time
+
+    def gap(a, b):
+        return _ne._hours_between(a, b)
+
+    return {
+        "wall_clock_utc": now_utc,
+        "sources": {
+            "nwp_analysis": {
+                "name": "NOAA GFS f000 analysis (0.25°)",
+                "analysis_time_utc": ana,
+                "role": "model input -- the ONLY source fed to SevereWeatherNetV2",
+                "age_hours_vs_wall_clock": gap(now_utc, ana),
+            },
+            "radar": {
+                "name": "RainViewer composite mosaic",
+                "observation_time_utc": radar_time,
+                "role": "observation evidence only; never a model input",
+                "age_hours_vs_wall_clock": gap(now_utc, radar_time),
+                "summary": radar_summary,
+            },
+            "station_observations": {
+                "name": "OpenWeatherMap current conditions",
+                "observation_time_utc": station_time,
+                "stations_reporting": stations_reporting,
+                "role": "observation evidence only; never a model input",
+                "age_hours_vs_wall_clock": gap(now_utc, station_time),
+            },
+        },
+        "forecast_reference": {
+            "reference_time_utc": ref,
+            "note": (
+                "The instant the forecast is ISSUED FOR. Distinct from the "
+                "analysis time, which is when the atmosphere it read was observed."
+            ),
+        },
+        "horizons": [
+            {"label": "NOW", "lead_hours": 0, "valid_time_utc": compute_valid_time(ref, 0)},
+            {"label": "+2h", "lead_hours": 2, "valid_time_utc": compute_valid_time(ref, 2)},
+            {"label": "+4h", "lead_hours": 4, "valid_time_utc": compute_valid_time(ref, 4)},
+            {"label": "+6h", "lead_hours": 6, "valid_time_utc": compute_valid_time(ref, 6)},
+        ],
+        "key_gaps_hours": {
+            "radar_minus_nwp_analysis": gap(radar_time, ana),
+            "station_minus_nwp_analysis": gap(station_time, ana),
+            "wall_clock_minus_nwp_analysis": gap(now_utc, ana),
+        },
+        "interpretation": (
+            "Radar and station observations are minutes old; the atmospheric "
+            "analysis the model reads is hours old because GFS is published with "
+            "production latency. A difference between the radar picture and the "
+            "NOW risk map is therefore expected and is reported, not hidden. "
+            "Observations do not modify the model's calibrated probability."
+        ),
+    }
+
+
+async def _now_evidence_for(svc, lat: float, lon: float, inspection: dict) -> dict:
+    """Assemble the NOW observation-evidence payload for one clicked cell.
+
+    Reads the SAME radar composite the Radar view shows and the SAME station
+    sweep the observation surface uses, so the NOW panel cannot disagree with
+    the products it cites. Every source failure degrades to an explicit
+    "unavailable" rather than to a zero: absent radar and observed no-echo are
+    different facts and must not collapse into each other.
+    """
+    import numpy as np
+
+    from src.inference import now_evidence
+    from src.inference.radar_observation import sample_echo_to_grid
+
+    model_prob = None
+    preds = inspection.get("predictions") or {}
+    if preds.get("thunderstorm_prob_pct") is not None:
+        model_prob = float(preds["thunderstorm_prob_pct"]) / 100.0
+
+    lat_idx = int(np.argmin(np.abs(svc.lats - lat)))
+    lon_idx = int(np.argmin(np.abs(svc.lons - lon)))
+
+    echo_frac = None
+    echo_cov = None
+    radar_time = None
+    radar_error = None
+    try:
+        field = await asyncio.get_running_loop().run_in_executor(
+            None, sample_echo_to_grid, svc.lats, svc.lons
+        )
+        radar_time = field.frame_time_utc
+        echo_cov = bool(field.coverage[lat_idx, lon_idx])
+        v = float(field.echo_fraction[lat_idx, lon_idx])
+        echo_frac = v if np.isfinite(v) else None
+    except Exception as e:
+        radar_error = str(e)
+
+    # Nearest reporting station from the existing cached sweep.
+    station_rain = None
+    station_name = None
+    station_time = None
+    try:
+        stations, _err = await _get_station_observations()
+        best = None
+        best_d = float("inf")
+        for s in (stations or []):
+            if s.rain_1h_mm is None:
+                continue
+            d = ((s.lat - lat) ** 2 + (s.lon - lon) ** 2) ** 0.5
+            if d < best_d:
+                best, best_d = s, d
+        if best is not None:
+            station_rain = float(best.rain_1h_mm)
+            station_name = f"{best.name} ({best_d:.2f}° away)"
+            station_time = best.observed_at_utc
+    except Exception:
+        pass
+
+    ev = now_evidence.assess(
+        model_prob=model_prob,
+        echo_fraction=echo_frac,
+        echo_coverage=echo_cov,
+        station_rain_mm=station_rain,
+        station_name=station_name,
+        radar_time_utc=radar_time,
+        station_time_utc=station_time,
+        analysis_time_utc=svc.live_analysis_time,
+        reference_time_utc=svc.live_reference_time,
+    ).to_dict()
+    if radar_error:
+        ev["observed"]["radar_error"] = radar_error
+    return ev
 
 
 @app.get("/api/time/reference", tags=["System"])
