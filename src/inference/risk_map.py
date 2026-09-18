@@ -43,12 +43,28 @@ def compute_valid_time(issue_time_str: Optional[str], lead_hours: int) -> Option
         return f"{issue_time_str} +{lead_hours}h"
 
 
+def _age_hours(analysis_time: str, issue_time: Optional[str]) -> Optional[float]:
+    """How far the observed input state lags the instant the forecast is issued
+    for. Returns None rather than 0.0 when either time cannot be parsed, so an
+    unknown lag is never reported as "no lag"."""
+    if not issue_time:
+        return None
+    try:
+        def _p(s: str) -> datetime:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return round((_p(issue_time) - _p(analysis_time)).total_seconds() / 3600.0, 2)
+    except Exception:
+        return None
+
+
 def predictions_to_geojson(
     pred: dict,
     valid_time: Optional[str] = None,
     lead_time_hours: Optional[int] = None,
     lead_idx: int = 0,
     as_polygon: bool = False,
+    analysis_time: Optional[str] = None,
 ) -> dict:
     """Convert spatial prediction arrays for one lead time into a GeoJSON
     FeatureCollection where each Feature is a 0.25 deg grid-cell point or polygon.
@@ -65,6 +81,11 @@ def predictions_to_geojson(
         Which lead-time slice to export.
     as_polygon : bool
         If True, exports 0.25-deg bounding boxes (Polygon); if False, Point centroids.
+    analysis_time : str | None
+        ISO-8601 time the input state was actually OBSERVED (the GFS f000
+        analysis in Live mode). Distinct from `valid_time`, which is the instant
+        the forecast is issued for. Omit only when the two genuinely coincide,
+        as in the historical ERA5 case study.
 
     Returns
     -------
@@ -126,7 +147,18 @@ def predictions_to_geojson(
             }
             if valid_time:
                 props["issue_time"] = valid_time
-                props["input_valid_time"] = valid_time
+                # WHEN THE INPUT WAS OBSERVED, which in Live mode is NOT the
+                # issue time: the forecast is issued for wall-clock now, but the
+                # atmosphere it read is the latest published GFS f000 analysis,
+                # routinely 6-11h earlier (production lag). Aliasing this field
+                # to `issue_time` claimed the model had just-observed input and
+                # made a radar-vs-risk comparison look like a like-for-like
+                # comparison of the same instant when it is not. Callers that
+                # know the real analysis time pass it explicitly.
+                props["input_valid_time"] = analysis_time or valid_time
+                if analysis_time:
+                    props["input_analysis_time"] = analysis_time
+                    props["input_age_hours"] = _age_hours(analysis_time, valid_time)
             if forecast_vt:
                 props["forecast_valid_time"] = forecast_vt
 

@@ -366,10 +366,18 @@ async def nowcast_risk_surface(
             # Live surfaces change every GFS cycle and must not be cached long;
             # the frontend also cache-busts per refresh.
             "Cache-Control": "no-cache" if str(mode).lower() == "live" else "public, max-age=3600",
-            "X-Min-Lat": "21.5394",
-            "X-Max-Lat": "26.9960",
-            "X-Min-Lon": "86.6103",
-            "X-Max-Lon": "89.8828",
+            # Georeferencing of the PNG. These MUST equal the extent the raster
+            # is actually rendered over (risk_surface.WB_MIN/MAX_LAT/LON), or a
+            # client that georeferences by these headers shifts the whole risk
+            # field. They previously carried the OLD 13-district box
+            # (26.9960N / 86.6103E), which stopped short of Darjeeling,
+            # Kalimpong and Purulia -- a ~0.8 deg (~90 km) north-west error
+            # against the full-state extent the renderer has used since.
+            # Sourced from the renderer so the two can never drift apart again.
+            "X-Min-Lat": str(WB_MIN_LAT_B),
+            "X-Max-Lat": str(WB_MAX_LAT_B),
+            "X-Min-Lon": str(WB_MIN_LON_B),
+            "X-Max-Lon": str(WB_MAX_LON_B),
         },
     )
 
