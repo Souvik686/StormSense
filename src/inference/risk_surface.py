@@ -149,10 +149,12 @@ def get_or_create_wb_mask(
 # Band edges are an internal implementation detail and are intentionally not
 # surfaced as numbers anywhere in the public UI -- the interface communicates
 # only the resulting category/colour.
-_BAND_CLEAR_MAX = 0.20   # below this: no meaningful risk -> left uncoloured
-_BAND_GREEN_MAX = 0.25   # lower risk
-_BAND_ORANGE_MAX = 0.75  # moderate through elevated risk
-# at and above _BAND_ORANGE_MAX: high risk
+# Band edges come from THE single source of truth. Four private `_BAND_*`
+# constants used to sit here (0.20/0.25/0.75); nothing ever read them, and their
+# 0.20 "clear" edge contradicted the 0.25 the painter below actually applies.
+# A future reader adjusting them would have changed nothing and believed they
+# had. Removed in favour of the shared definition.
+from src.inference.risk_thresholds import WATCH_MIN, ALERT_MIN, WARNING_MIN
 
 
 def colormap_risk_surface(smoothed_grid: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -189,10 +191,10 @@ def colormap_risk_surface(smoothed_grid: np.ndarray, mask: np.ndarray) -> np.nda
     ALPHA = 200
 
     bands = (
-        (smoothed_grid < 0.25,                                (16, 185, 129)),   # emerald
-        ((smoothed_grid >= 0.25) & (smoothed_grid < 0.50),    (245, 158, 11)),   # amber
-        ((smoothed_grid >= 0.50) & (smoothed_grid < 0.75),    (249, 115, 22)),   # orange
-        (smoothed_grid >= 0.75,                               (239, 68, 68)),    # red
+        (smoothed_grid < WATCH_MIN,                                     (16, 185, 129)),   # emerald
+        ((smoothed_grid >= WATCH_MIN) & (smoothed_grid < ALERT_MIN),    (245, 158, 11)),   # amber
+        ((smoothed_grid >= ALERT_MIN) & (smoothed_grid < WARNING_MIN),  (249, 115, 22)),   # orange
+        (smoothed_grid >= WARNING_MIN,                                  (239, 68, 68)),    # red
     )
     for sel, (r, g, b) in bands:
         rgba[sel, 0] = r

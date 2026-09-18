@@ -33,6 +33,7 @@ from src.inference.risk_surface import (
     WB_MAX_LON,
 )
 from src.inference import gfs_live
+from src.inference import risk_thresholds
 from src.utils.config import load_config, Config
 
 _SERVICE_LOCK = threading.Lock()
@@ -736,14 +737,9 @@ class NowcastService:
         return self.district_cells.get(district_name, [])
 
     def _level_for_prob(self, p: float) -> str:
-        if p >= 0.75:
-            return "red"
-        elif p >= 0.50:
-            return "orange"
-        elif p >= 0.25:
-            return "yellow"
-        else:
-            return "green"
+        # Delegates to THE single source of truth (src/inference/risk_thresholds.py)
+        # so the popup, the GeoJSON and the painted surface can never drift apart.
+        return risk_thresholds.level_for_prob(p)
 
     def _stage_for_level(self, level: str) -> str:
         stages = {
@@ -785,6 +781,77 @@ class NowcastService:
                 + (self.historical_init_error or "no prediction has been generated.")
             )
         return pred
+
+    def live_now_provenance(self) -> Dict[str, Any]:
+        """What the LIVE lead=0 ("NOW") field actually is, stated plainly.
+
+        NOW is not a true t=0 analysis-time diagnosis. The model has no lead-0
+        head, so NOW is produced by running inference on the input window ending
+        2 hours before the forecast window and taking that run's +2h output
+        (`refresh_live_state`). In Historical mode that works exactly as
+        intended, because ERA5 is HOURLY: `dataset[idx-2]` really is two hours
+        earlier, and its +2h head lands precisely on the case-study t0.
+
+        Live GFS is different, and this is the honest caveat: f000 analyses are
+        published only every 6 hours, so `target_t0 - 2h` usually floors to the
+        SAME cycle as `target_t0`. Measured over a full day, the two fetches
+        resolve to the same analysis for 16 of 24 wall-clock hours, and in those
+        hours the NOW field is bit-identical to the +2h field (verified: equal
+        SHA-256 over the 33x25 array). Its true validity is
+        `analysis_time + 2h`, which is typically 5-10 h BEHIND wall clock.
+
+        Rather than fabricate a t=0 field the data cannot support, the API
+        reports this so the UI can label NOW truthfully.
+        """
+        out: Dict[str, Any] = {
+            "is_true_t0_analysis": False,
+            "construction": (
+                "Inference on the input window ending 2 h before the forecast "
+                "window; its +2 h head is served as NOW. The model has no lead-0 head."
+            ),
+            "analysis_time_utc": self.live_analysis_time,
+            "reference_time_utc": self.live_reference_time,
+            "field_valid_time_utc": None,
+            "identical_to_plus_2h": None,
+            "caveat": None,
+        }
+        try:
+            if self.live_analysis_time:
+                a = datetime.fromisoformat(self.live_analysis_time)
+                if a.tzinfo is None:
+                    a = a.replace(tzinfo=timezone.utc)
+                vt = a + timedelta(hours=2)
+                out["field_valid_time_utc"] = vt.isoformat()
+                if self.live_reference_time:
+                    r = datetime.fromisoformat(self.live_reference_time)
+                    if r.tzinfo is None:
+                        r = r.replace(tzinfo=timezone.utc)
+                    out["field_age_vs_reference_hours"] = round(
+                        (r - vt).total_seconds() / 3600.0, 2
+                    )
+            pred = self.live_pred
+            if pred is not None:
+                sp = pred["severe_weather_prob"]
+                if sp.shape[0] >= 2:
+                    out["identical_to_plus_2h"] = bool(
+                        np.array_equal(sp[0], sp[1])
+                    )
+            if out["identical_to_plus_2h"]:
+                out["caveat"] = (
+                    "This NOW field is identical to the +2 h field. GFS publishes "
+                    "analyses only every 6 h, so the 2-hour-earlier input window "
+                    "resolved to the same analysis cycle. Read NOW as the earliest "
+                    "available forecast step, not as a real-time observation."
+                )
+            else:
+                out["caveat"] = (
+                    "NOW derives from an earlier analysis cycle than the forecast "
+                    "window, so it is a distinct field; its validity is still "
+                    "analysis time + 2 h, not wall clock."
+                )
+        except Exception as e:
+            out["caveat"] = f"Provenance could not be fully determined: {e}"
+        return out
 
     def _issue_time_for_mode(self, mode: Optional[str]) -> str:
         """The authoritative reference instant that +2/+4/+6 are measured from.
@@ -897,11 +964,36 @@ class NowcastService:
             dist_overall = float(np.max(ov_vals))
             dist_prob_mean = float(np.mean(p_vals))
         else:
-            dist_prob = float(prob_grid.max())
-            dist_rain = float(rain_grid.max())
-            dist_ff = float(ff_grid.max())
-            dist_overall = float(overall_grid.max())
-            dist_prob_mean = float(prob_grid.mean())
+            # "Whole State" must mean WEST BENGAL, not the whole model domain.
+            #
+            # The model grid spans 20-28N / 84-90E, which deliberately includes
+            # synoptic context OUTSIDE West Bengal (Odisha, Jharkhand, Bihar,
+            # Bangladesh, Nepal). Taking a plain .max() over that array reported
+            # a peak from a neighbouring state under a card labelled "WEST
+            # BENGAL PEAK". Measured on live 2026-09-18 12Z: the thunderstorm
+            # card read 31% from a cell at 21.00N, 85.25E (Odisha) while the
+            # true West Bengal peak was 7.83% -- so the dashboard showed an
+            # amber 31% while the risk map was correctly all-green, which is
+            # exactly the contradiction that prompted this audit.
+            #
+            # `_wb_cell_mask()` is the same authoritative outer boundary used to
+            # reject out-of-state map clicks, so the number on the card and the
+            # colour on the map are now derived from the same geography.
+            wb_mask = self._wb_cell_mask()
+            if wb_mask is not None and wb_mask.any():
+                dist_prob = float(prob_grid[wb_mask].max())
+                dist_rain = float(rain_grid[wb_mask].max())
+                dist_ff = float(ff_grid[wb_mask].max())
+                dist_overall = float(overall_grid[wb_mask].max())
+                dist_prob_mean = float(prob_grid[wb_mask].mean())
+            else:
+                # Boundary unavailable: fall back to the full domain rather than
+                # returning nothing, and say so instead of silently mislabelling.
+                dist_prob = float(prob_grid.max())
+                dist_rain = float(rain_grid.max())
+                dist_ff = float(ff_grid.max())
+                dist_overall = float(overall_grid.max())
+                dist_prob_mean = float(prob_grid.mean())
 
         lvl_overall = self._level_for_prob(dist_overall)
         lvl_ts = self._level_for_prob(dist_prob)
@@ -1258,6 +1350,37 @@ class NowcastService:
             "max_lon": WB_MAX_LON,
         }
 
+    def _wb_cell_mask(self) -> Optional[np.ndarray]:
+        """Boolean (n_lat, n_lon) mask of model cells that lie inside West Bengal.
+
+        Used so that any "whole state" aggregate describes West Bengal and not
+        the wider 20-28N / 84-90E model domain, which also covers Odisha,
+        Jharkhand, Bihar, Bangladesh and Nepal.
+
+        A cell counts as inside when its centre is within the outer state
+        boundary, or within half a grid step (0.125 deg) of it -- the same
+        tolerance `_init_district_mapping` uses, so a coastal or border cell
+        whose centre falls just outside the polygon still contributes. Returns
+        None when the boundary cannot be loaded, so callers can degrade
+        explicitly rather than silently aggregating the wrong area.
+        """
+        if getattr(self, "_wb_cell_mask_cache", None) is not None:
+            return self._wb_cell_mask_cache
+        if self._wb_polygon is None:
+            # Reuse the same loader/caching path as the click test.
+            self._is_inside_west_bengal(float(self.lats[0]), float(self.lons[0]))
+        poly = self._wb_polygon
+        if poly is None:
+            return None
+        mask = np.zeros((len(self.lats), len(self.lons)), dtype=bool)
+        for i, la in enumerate(self.lats):
+            for j, lo in enumerate(self.lons):
+                p = Point(float(lo), float(la))
+                if poly.contains(p) or poly.distance(p) < 0.125:
+                    mask[i, j] = True
+        self._wb_cell_mask_cache = mask
+        return mask
+
     def _is_inside_west_bengal(self, lat: float, lon: float) -> bool:
         """Point-in-polygon against the authoritative outer state boundary
         (Data/BOUNDARIES/west_bengal_full.geojson), used to reject clicks outside the
@@ -1319,7 +1442,7 @@ class NowcastService:
         ov = float(pred["overall_risk"][li, lat_idx, lon_idx])
 
         lvl = self._level_for_prob(sp)
-        lbl = "WARNING" if sp >= 0.75 else "ALERT" if sp >= 0.50 else "WATCH" if sp >= 0.25 else "NORMAL"
+        lbl = risk_thresholds.stage_for_prob(sp)
 
         # 4. Physical analysis inputs at t=0. Only available for the historical
         # case study (denormalized at init); never borrowed from historical data
@@ -1486,9 +1609,19 @@ class NowcastService:
         overall_grid = pred["overall_risk"][li]
         thr = float(self.predictor.threshold_per_lead.get(lead_hours, 0.5) if isinstance(self.predictor.threshold_per_lead, dict) else 0.5)
 
+        # Rank cells INSIDE WEST BENGAL only. The model grid spans 20-28N/84-90E
+        # and also covers Odisha, Jharkhand, Bihar, Bangladesh and Nepal, so an
+        # unrestricted ranking filled the "predicted high-risk ML cells" list
+        # with neighbouring-state cells labelled "Domain Cell" (measured: the
+        # top entries read 31.0% / 30.1% / 27.5% from Odisha while the true West
+        # Bengal peak was 7.83%). That made the panel contradict every other
+        # West-Bengal-scoped number on the page.
+        wb_mask = self._wb_cell_mask()
         cells_data = []
         for i, lat in enumerate(self.lats):
             for j, lon in enumerate(self.lons):
+                if wb_mask is not None and not wb_mask[i, j]:
+                    continue
                 p = float(prob_grid[i, j])
                 r = float(rain_grid[i, j])
                 ff = float(ff_grid[i, j])
@@ -1587,10 +1720,28 @@ class NowcastService:
                 j = int(np.argmin(np.abs(self.lons - lon)))
                 loc_desc = f"{float(self.lats[i]):.2f}N, {float(self.lons[j]):.2f}E"
             else:
+                # The default cell must be the highest-risk cell IN WEST BENGAL,
+                # for the same reason the hazard cards are WB-masked: the model
+                # grid spans 20-28N/84-90E and also covers Odisha, Jharkhand,
+                # Bihar, Bangladesh and Nepal. A plain domain-wide argmax made
+                # the XAI panel explain a cell in Odisha (measured: 21.00N,
+                # 85.25E at 31.0%) while every hazard card described West
+                # Bengal's 8% peak -- so the "explanation" belonged to a
+                # different place than the thing being explained.
                 prob = self.live_pred["severe_weather_prob"][li]
-                i, j = np.unravel_index(int(np.argmax(prob)), prob.shape)
+                wb_mask = self._wb_cell_mask()
+                if wb_mask is not None and wb_mask.any():
+                    masked = np.where(wb_mask, prob, -np.inf)
+                    i, j = np.unravel_index(int(np.argmax(masked)), masked.shape)
+                    scope = "West Bengal"
+                else:
+                    i, j = np.unravel_index(int(np.argmax(prob)), prob.shape)
+                    scope = "model domain"
                 i, j = int(i), int(j)
-                loc_desc = f"highest-risk cell ({float(self.lats[i]):.2f}N, {float(self.lons[j]):.2f}E)"
+                loc_desc = (
+                    f"highest-risk cell in {scope} "
+                    f"({float(self.lats[i]):.2f}N, {float(self.lons[j]):.2f}E)"
+                )
 
             s = self.live_surface_state  # real, denormalized t0 GFS analysis state
             xai_inputs = {
