@@ -16,6 +16,8 @@ from typing import Optional
 
 import numpy as np
 
+from src.inference.risk_thresholds import WATCH_MIN, ALERT_MIN, WARNING_MIN
+
 
 def _risk_level(score: float) -> str:
     """Convert a 0-1 risk score to a human-readable level."""
@@ -116,11 +118,11 @@ def predictions_to_geojson(
     for i, lat in enumerate(lats):
         for j, lon in enumerate(lons):
             prob = float(severe_prob[i, j])
-            if prob >= 0.75:
+            if prob >= WARNING_MIN:
                 imd_color = "red"
-            elif prob >= 0.50:
+            elif prob >= ALERT_MIN:
                 imd_color = "orange"
-            elif prob >= 0.25:
+            elif prob >= WATCH_MIN:
                 imd_color = "yellow"
             else:
                 imd_color = "green"

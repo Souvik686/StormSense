@@ -405,7 +405,29 @@
             releaseTile: function (tile) {
               if (!tile) return;
               var imgs = tile.getElementsByTagName('img');
-              for (var i = 0; i < imgs.length; i++) { imgs[i].src = ''; }
+              for (var i = 0; i < imgs.length; i++) {
+                var img = imgs[i];
+                // Do NOT wipe src while the image is still downloading.
+                //
+                // Google calls releaseTile() for tiles it is recycling, and it
+                // does so even for tiles whose <img> has not finished loading.
+                // Assigning src = '' to an in-flight <img> CANCELS the request,
+                // which surfaced as exactly 9 net::ERR_ABORTED entries in the
+                // browser console on every visit to the Radar view (proven:
+                // 9 aborts == 9 src-wipes, and the map immediately re-requested
+                // the same 9 URLs and got HTTP 200). Nothing was visually
+                // broken, but a real request was being started and killed, and
+                // genuine radar failures were indistinguishable from this noise.
+                //
+                // `complete` is true once the fetch has finished (successfully
+                // or not), so releasing only completed images frees the decoded
+                // bitmap without aborting anything. An incomplete image is left
+                // alone; it is detached from the DOM with its parent tile and
+                // is garbage-collected normally.
+                if (img.complete) {
+                  img.removeAttribute('src');
+                }
+              }
             }
           };
         },
@@ -821,7 +843,16 @@
   }
 
   window.stormSenseMode = detectInitialMode();
-  window.currentLeadHours = 2;
+  // The dashboard opens on NOW, not on a forecast horizon: the first thing a
+  // viewer should see is the current risk state, with +2/+4/+6h as deliberate
+  // follow-ups. Must be the STRING "now" (not 0) -- every horizon-aware branch
+  // in this file tests `currentLeadHours === "now"` to decide whether to paint
+  // observations or a forecast, and apiLeadHours() maps "now" -> lead 0 for the
+  // API. Using 0 here would request the right data but take the forecast
+  // branches, labelling live observations as a forecast.
+  window.currentLeadHours = "now";
+  // Benchmark lead is independent: the WRF/Nowcast comparison has no NOW column
+  // (the model's heads start at +2h), so it stays on its own default.
   window.currentBenchmarkLead = 2;
   window.mapDomainMode = "wb"; // 'wb' or 'full'
 
@@ -1325,13 +1356,63 @@
             // and the conditions panel stayed on em dashes.
             if (data) paintDashboard(data);
             updateMapMode("historical");
+            // Repaint the conditions strip from the EVENT's t=0 reanalysis.
+            // Nothing else owns this strip in historical mode, so without it
+            // the live values from before the switch stayed on screen.
+            if (window.StormSenseNowcastData) {
+              renderNowcastHistorical(window.StormSenseNowcastData);
+            }
+            // Re-bind the Current Location panel to the CASE STUDY.
+            // /api/nowcast/point accepts ?mode=historical and returns Remal's
+            // values AT THE USER'S COORDINATES (Kolkata: 50.5% / 9.9 mm /
+            // 23.3%), which is a different and more meaningful number than the
+            // domain-wide peak (100% / 47.3 mm) the meters showed before.
+            // Without this the location panel simply never followed the user
+            // into historical mode.
+            refreshLocationPanelForMode();
         });
     } else {
         window.fetchLiveSurfaceData(false);
         window.refreshLiveDashboard();
         updateMapMode("live");
+        // Re-bind the Current Location panel to LIVE.
+        //
+        // The three risk meters and the horizon label are owned by
+        // applyLiveLocation() -> applyPointRiskMeters(), which nothing called
+        // on a mode switch. Leaving them alone meant Cyclone Remal's values
+        // (100% / 47.3 mm / 100%) stayed on screen under a LIVE badge after
+        // switching back -- historical data presented as current risk.
+        refreshLocationPanelForMode();
     }
   };
+
+  /**
+   * Re-bind the Current Location panel (district, coordinates, the three risk
+   * meters and the horizon label) to whichever mode is now active.
+   *
+   * Both modes are supported: /api/nowcast/point takes ?mode=, so historical
+   * returns the case study's risk AT THE USER'S COORDINATES rather than the
+   * domain-wide peak. Nothing here computes values in the frontend -- it only
+   * re-queries with the correct mode so the panel stops describing the mode the
+   * user just left.
+   *
+   * If geolocation has not resolved yet (or was denied) this acquires it once,
+   * so entering historical mode directly still populates the panel.
+   */
+  function refreshLocationPanelForMode() {
+    if (typeof window.applyLiveLocation !== "function") return;
+    if (window.StormSenseUserLocation) {
+      window.applyLiveLocation(window.StormSenseUserLocation);
+      return;
+    }
+    if (typeof acquireLiveLocation === "function") {
+      acquireLiveLocation().then(function (loc) {
+        window.applyLiveLocation(loc);
+      });
+    } else {
+      window.applyLiveLocation(null);
+    }
+  }
 
   window.toggleOperationalMode = function () {
     var nextMode = window.stormSenseMode === "live" ? "historical" : "live";
@@ -2312,7 +2393,18 @@
     // At a forecast horizon the lower cards belong to paintHorizonConditions();
     // painting current observations there would show NOW's weather beneath a
     // "+4h" label.
-    if (window.currentLeadHours !== "now" && window.currentLeadHours != null) return;
+    if (window.currentLeadHours !== "now" && window.currentLeadHours != null) {
+      // At a forecast horizon these cards belong to paintHorizonConditions().
+      // Returning WITHOUT delegating left them stuck on their "..." placeholder
+      // for the whole session on first load: the dashboard opens at the default
+      // +2h horizon, so this guard fired before any horizon button had been
+      // clicked, and nothing else populated Temperature / Rainfall / Humidity /
+      // Wind or the observation-age line. They only appeared once the user
+      // happened to click a horizon. paintHistoricalConditions() already
+      // delegates here for exactly this reason; the live path now matches it.
+      paintHorizonConditions();
+      return;
+    }
     // A missing value renders as a bare "—" with NO unit appended. Rainfall in
     // particular must never default to "0.0 mm": absent data is not a
     // measurement of zero rain, and showing it as one is a false observation.
@@ -2386,6 +2478,15 @@
     if (!root) return;
     var obs = (liveObs && liveObs.observations) || {};
 
+    // NEVER paint live observations while the historical case study is open.
+    //
+    // This strip kept whatever live values it last held when the user entered
+    // historical mode, so today's Kolkata weather (26.9 C / 100% RH) sat inside
+    // the Cyclone Remal replay under a "LIVE OBSERVATION" badge -- present-day
+    // observations presented as part of a 2024 event. The historical painter
+    // owns the strip in that mode; bail out rather than overwrite it.
+    if (window.stormSenseMode === "historical") return;
+
     // This renderer paints OBSERVED surface values, so it owns the strip's
     // labels while it is the last writer. renderNowcast() sets the forecast
     // labels for the same container; whichever painted the cards must also be
@@ -2414,6 +2515,56 @@
       { label: "SURFACE WIND", val: num(obs.wind_speed_kmh, 1, " km/h"), sub: "10 m wind", color: "text-teal-300", border: "border-teal-500/40" },
       { label: "MSL PRESSURE", val: obs.pressure_hpa != null ? obs.pressure_hpa + " hPa" : UNAVAILABLE, sub: "Barometric pressure", color: "text-indigo-300", border: "border-indigo-500/40" },
       { label: "VISIBILITY", val: num(obs.visibility_km, 1, " km"), sub: desc, color: "text-slate-200", border: "border-slate-700" }
+    ];
+
+    root.innerHTML = cards.map(function (c) {
+      return (
+        '<div class="p-3 rounded-xl border bg-slate-950/80 ' + c.border + ' text-center font-mono">' +
+          '<div class="text-[10px] text-slate-400 uppercase font-bold">' + c.label + '</div>' +
+          '<div class="' + c.color + ' font-bold text-lg mt-1">' + c.val + '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-1 truncate font-sans">' + c.sub + '</div>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  /**
+   * Paint the conditions strip with the CASE STUDY's own t=0 reanalysis state.
+   *
+   * Counterpart to renderNowcastLive() for historical mode. Without it the
+   * strip simply kept the live values it last held, so present-day weather
+   * appeared inside the Cyclone Remal replay under a "LIVE OBSERVATION" badge.
+   *
+   * Values come from /api/nowcast/summary?mode=historical -> surface_obs_t0,
+   * which the backend denormalizes from the event's ERA5 analysis window. These
+   * are OBSERVED reanalysis values at the event's t=0, not a forecast and not
+   * live station data, and the badge says so. Fields the reanalysis payload
+   * does not carry (feels-like, visibility, sky description) render as "—"
+   * rather than borrowing a live value.
+   */
+  function renderNowcastHistorical(summary) {
+    var root = document.getElementById("nowcast-steps");
+    if (!root) return;
+    var t0 = summary && summary.surface_obs_t0;
+    if (!t0) return;
+
+    setText("nowcast-timeline-title", "Observed conditions at event t=0");
+    setText("nowcast-timeline-badge", "ERA5 REANALYSIS");
+
+    var UNAVAILABLE = "—";
+    function num(v, digits, suffix) {
+      if (v == null || !isFinite(Number(v))) return UNAVAILABLE;
+      return Number(v).toFixed(digits == null ? 1 : digits) + (suffix || "");
+    }
+    var when = t0.time ? String(t0.time) : "event analysis time";
+
+    var cards = [
+      { label: "AIR TEMPERATURE", val: num(t0.temperature_c, 1, "°C"), sub: when, color: "text-white", border: "border-cyan-500/40" },
+      { label: "RAINFALL RATE", val: num(t0.rainfall_mm, 1, " mm/h"), sub: "Reanalysis precipitation", color: "text-cyan-300", border: "border-cyan-500/40" },
+      { label: "RELATIVE HUMIDITY", val: t0.humidity_pct != null ? t0.humidity_pct + "%" : UNAVAILABLE, sub: "Atmospheric moisture", color: "text-blue-300", border: "border-blue-500/40" },
+      { label: "SURFACE WIND", val: num(t0.wind_speed_kmh, 1, " km/h"), sub: "10 m wind", color: "text-teal-300", border: "border-teal-500/40" },
+      { label: "MSL PRESSURE", val: t0.pressure_hpa != null ? Number(t0.pressure_hpa).toFixed(1) + " hPa" : UNAVAILABLE, sub: "Barometric pressure", color: "text-indigo-300", border: "border-indigo-500/40" },
+      { label: "SOURCE", val: "ERA5", sub: t0.source || "Reference atmospheric analysis", color: "text-slate-200", border: "border-slate-700" }
     ];
 
     root.innerHTML = cards.map(function (c) {
@@ -2575,24 +2726,39 @@
         }
       }
 
-      // Historical case study only: there is no live user location in this
-      // mode, so the meters legitimately describe the case-study domain rather
-      // than a point. (In LIVE mode they are bound to the user's coordinates by
-      // applyPointRiskMeters.)
-      setText("location-risk-horizon", "Case study · +" + (window.currentLeadHours || 2) + "h");
-      var tsP = getHazardProbability(data.hazards.thunderstorm);
-      setText("meter-ts-label", tsP + "%");
-      setWidth("meter-ts-bar", tsP);
+      // Historical meters describe the CASE-STUDY DOMAIN PEAK. That is only the
+      // right thing to show when we have no user coordinates: when we do,
+      // refreshLocationPanelForMode() -> applyLiveLocation() re-queries
+      // /api/nowcast/point?mode=historical and paints the event's risk AT THOSE
+      // COORDINATES, which is both more specific and more honest (Kolkata reads
+      // 50.5% / 9.9 mm / 23.3% rather than the domain peak 100% / 47.3 mm).
+      //
+      // So the domain-peak fallback is painted ONLY when no location is known;
+      // otherwise this would run first and be immediately overwritten, and a
+      // failed point query would leave the domain peak mislabelled as local.
+      var histHorizonLabel = (window.currentLeadHours === "now"
+                              || window.currentLeadHours == null)
+        ? "Case study · T0 (now)"
+        // Previously concatenated `currentLeadHours` blindly, which rendered
+        // the string "now" as "Case study · +nowh".
+        : "Case study · +" + window.currentLeadHours + "h";
+      setText("location-risk-horizon", histHorizonLabel);
 
-      var rawRainObj = window.StormSenseNowcastData && window.StormSenseNowcastData.hazards && window.StormSenseNowcastData.hazards.heavy_rainfall;
-      var rP = rawRainObj && rawRainObj.rate_mm_3h != null ? rawRainObj.rate_mm_3h : getHazardProbability(data.hazards.heavyRainfall);
-      var rPct = getHazardProbability(data.hazards.heavyRainfall);
-      setText("meter-rain-label", (typeof rP === "number" ? rP.toFixed(1) + " mm" : rP + "%"));
-      setWidth("meter-rain-bar", rPct);
+      if (!window.StormSenseUserLocation) {
+        var tsP = getHazardProbability(data.hazards.thunderstorm);
+        setText("meter-ts-label", tsP + "%");
+        setWidth("meter-ts-bar", tsP);
 
-      var fP = getHazardProbability(data.hazards.flashFlood);
-      setText("meter-flood-label", fP + "%");
-      setWidth("meter-flood-bar", fP);
+        var rawRainObj = window.StormSenseNowcastData && window.StormSenseNowcastData.hazards && window.StormSenseNowcastData.hazards.heavy_rainfall;
+        var rP = rawRainObj && rawRainObj.rate_mm_3h != null ? rawRainObj.rate_mm_3h : getHazardProbability(data.hazards.heavyRainfall);
+        var rPct = getHazardProbability(data.hazards.heavyRainfall);
+        setText("meter-rain-label", (typeof rP === "number" ? rP.toFixed(1) + " mm" : rP + "%"));
+        setWidth("meter-rain-bar", rPct);
+
+        var fP = getHazardProbability(data.hazards.flashFlood);
+        setText("meter-flood-label", fP + "%");
+        setWidth("meter-flood-bar", fP);
+      }
 
       var profLevel = document.getElementById("profile-level");
       if (profLevel) profLevel.innerHTML = '<span class="size-2 bg-cyan-400 rounded-full animate-pulse"></span> HISTORICAL CASE STUDY';
@@ -3556,11 +3722,20 @@
     if (!mapInstance || typeof L === "undefined") return;
     removeLiveLocationMarker(mapInstance);
 
-    // The viewer's CURRENT position is live context and has no meaning inside a
-    // frozen 2024 event replay; drawing it there mixes live state into the
-    // historical case study.
-    if (window.stormSenseMode === "historical") return;
-
+    // The marker is drawn in BOTH modes.
+    //
+    // It was previously suppressed in historical mode on the grounds that a
+    // live position "has no meaning inside a frozen 2024 event replay". That
+    // reasoning does not hold: the marker answers "where am I on this map",
+    // which is a question about GEOGRAPHY, not about time. The case study's
+    // whole point is to show what Cyclone Remal did over West Bengal, and the
+    // viewer's own location is the most useful reference point for reading it
+    // -- the Current Location panel already reports Remal's risk AT those
+    // coordinates (Kolkata: 51% / 9.9 mm / 23%), so hiding the marker left the
+    // panel describing a point the map refused to show.
+    //
+    // No live DATA is mixed in by doing this: the marker carries only the
+    // coordinate, and its popup is labelled per-mode below.
     var loc = window.StormSenseUserLocation;
     if (!loc || loc.lat == null || loc.lon == null) return;
 
@@ -3583,13 +3758,25 @@
       ? '<div style="display:flex;justify-content:space-between;"><span>Accuracy:</span><strong>&plusmn;' + Math.round(loc.accuracy_m) + ' m</strong></div>'
       : '';
 
+    // The marker shows a COORDINATE, which is mode-independent. The note below
+    // states which field the surrounding map is painting, so the violet dot can
+    // never be read as "live data inside the case study".
+    var isHistMarker = (window.stormSenseMode === "historical");
+    var modeNote = isHistMarker
+      ? '<div style="margin-top:5px;padding-top:5px;border-top:1px solid #3b0764;color:#a78bfa;font-size:9px;line-height:1.4;">'
+        + 'Your position, shown for geographic reference. The map around it is the '
+        + 'Cyclone Remal case study (26 May 2024), not current conditions.</div>'
+      : '';
+
     var popup =
       '<div style="font-family:monospace;font-size:11px;padding:8px;color:#f8fafc;background:#0f172a;border-radius:10px;min-width:190px;border:1px solid #7e22ce;">' +
-        '<div style="font-weight:800;font-size:12px;margin-bottom:4px;color:#c084fc;">CURRENT LIVE LOCATION</div>' +
+        '<div style="font-weight:800;font-size:12px;margin-bottom:4px;color:#c084fc;">' +
+          (isHistMarker ? 'YOUR LOCATION' : 'CURRENT LIVE LOCATION') + '</div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Coordinates:</span><strong>' +
           Number(loc.lat).toFixed(4) + '°N, ' + Number(loc.lon).toFixed(4) + '°E</strong></div>' +
         accuracy +
         '<div style="display:flex;justify-content:space-between;"><span>Source:</span><strong>' + (loc.source || "device") + '</strong></div>' +
+        modeNote +
       '</div>';
 
     var marker = L.marker([loc.lat, loc.lon], { icon: icon, zIndexOffset: 1000 }).bindPopup(popup);
@@ -3721,9 +3908,14 @@
     var hudLead = document.getElementById("legend-lead-tag");
 
     if (isHistorical) {
-      // Historical mode shows a frozen case study: no live location marker.
-      removeLiveLocationMarker(map);
       renderContinuousRiskSurface(map, window.currentLeadHours || 2);
+      // The position marker is drawn in the case study too: it answers "where
+      // am I on this map", which is geography, not time. It was previously
+      // removed here, so the Current Location panel reported Remal's risk at
+      // the viewer's coordinates while the map refused to show where that was.
+      // renderLiveLocationMarker() labels the popup per-mode so no live data is
+      // implied.
+      renderLiveLocationMarker(map);
       if (hudTitle) hudTitle.textContent = "SEVERE WEATHER RISK (CASE STUDY)";
     } else {
       renderContinuousRiskSurface(map, window.currentLeadHours || 2);
@@ -3869,6 +4061,107 @@
       '</div>';
   }
 
+  // ---------------------------------------------------------------------------
+  // NOW observation-evidence block (backend: /api/nowcast/point -> now_evidence)
+  //
+  // Renders what radar and the nearest station are OBSERVING at this cell, each
+  // with its own timestamp, beside the model's probability. It deliberately does
+  // NOT alter the displayed probability: radar and station readings are not
+  // inputs to SevereWeatherNetV2, and the measured agreement between the two
+  // observation sources over West Bengal (r = 0.104) is far too weak to justify
+  // any fusion weight. The block exists so a disagreement is VISIBLE rather than
+  // silently averaged away -- see STORMSENSE_FULL_HANDOFF_REPORT.md section 8.
+  //
+  // Only present for live NOW (lead 0); the backend omits it on forecast
+  // horizons (a current observation says nothing about a future hour) and
+  // returns NOT_APPLICABLE in the frozen historical case study.
+  // ---------------------------------------------------------------------------
+  var NOW_VERDICT_STYLE = {
+    AGREE:                 { color: "#34d399", label: "OBSERVATIONS AGREE" },
+    OBSERVED_NOT_MODELLED: { color: "#f59e0b", label: "OBSERVED · NOT MODELLED" },
+    MODELLED_NOT_OBSERVED: { color: "#38bdf8", label: "MODELLED · NOT YET OBSERVED" },
+    NO_OBSERVATION:        { color: "#94a3b8", label: "NO OBSERVATION" }
+  };
+
+  function nowEvidenceHtml(ev) {
+    if (!ev || !ev.verdict || ev.verdict === "NOT_APPLICABLE") return "";
+    var st = NOW_VERDICT_STYLE[ev.verdict] || NOW_VERDICT_STYLE.NO_OBSERVATION;
+    var o = ev.observed || {};
+    var gaps = ev.product_time_gaps_hours || {};
+
+    // Echo is a coverage FRACTION, not a rain rate and not a dBZ. Label it as
+    // what it is. "no coverage" and "no echo" are different facts and must not
+    // collapse into a single dash.
+    var echoTxt;
+    if (o.radar_has_coverage === false) {
+      echoTxt = "no radar coverage";
+    } else if (o.radar_echo_fraction == null) {
+      echoTxt = "unavailable";
+    } else {
+      echoTxt = (o.radar_echo_fraction * 100).toFixed(0) + "% of cell";
+    }
+    var rainTxt = (o.station_rain_1h_mm == null)
+      ? "unavailable"
+      : o.station_rain_1h_mm + " mm/h";
+
+    var lag = gaps.reference_minus_analysis;
+    // When the lag cannot be computed, say so as a sentence rather than
+    // splicing "unknown" into "is <lag> older than", which read as
+    // "is unknown older than these observations".
+    var lagLine = (lag == null)
+      ? 'Model input age could not be determined'
+      : 'Model input is <strong style="color:#cbd5e1;">' + lag.toFixed(1) + ' h</strong> older than these observations';
+
+    return '' +
+      '<div style="background:#0b1220;border:1px solid ' + st.color + '55;border-radius:6px;padding:6px;margin-bottom:6px;font-size:10px;">' +
+        '<div style="color:' + st.color + ';font-weight:bold;margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;">' +
+          '<span>Observed now</span>' +
+          '<span style="font-size:8px;letter-spacing:0.3px;">' + st.label + '</span>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>Radar echo:</span><strong>' + echoTxt + '</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;color:#64748b;font-size:9px;margin-bottom:2px;"><span>radar scan</span><span>' + istClockFromIso(o.radar_time_utc) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>Station rain (1h):</span><strong>' + rainTxt + '</strong></div>' +
+        '<div style="display:flex;justify-content:space-between;color:#64748b;font-size:9px;"><span>' + (o.nearest_station || "nearest station") + '</span><span>' + istClockFromIso(o.station_time_utc) + '</span></div>' +
+        '<div style="border-top:1px solid #1e293b;margin-top:4px;padding-top:4px;color:#94a3b8;font-size:9px;line-height:1.4;">' +
+          lagLine + ' (analysis ' + istClockFromIso((ev.model_input || {}).analysis_time_utc) + '). ' +
+          'Observations are shown for context and do not change the model probability.' +
+        '</div>' +
+      '</div>';
+  }
+
+  // ISO-8601 (UTC) -> "HH:MM IST", timezone-independent. Returns an em dash for
+  // a missing time rather than inventing "now".
+  function istClockFromIso(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    var ist = new Date(d.getTime() + (5.5 * 3600000));
+    return String(ist.getUTCHours()).padStart(2, "0") + ":" +
+           String(ist.getUTCMinutes()).padStart(2, "0") + " IST";
+  }
+
+  // What the LIVE "NOW" field actually is. The model has no lead-0 head, so NOW
+  // is the +2h output of an inference run on a 2-hour-earlier input window. With
+  // ERA5 (Historical) that lands exactly on t0. With GFS (Live) analyses arrive
+  // only every 6h, so the earlier window usually resolves to the SAME cycle and
+  // NOW comes out identical to +2h, valid at analysis+2h -- typically hours
+  // behind wall clock. Shown so NOW is never read as a real-time observation.
+  function nowProvenanceHtml(pv) {
+    if (!pv || pv.is_true_t0_analysis !== false) return "";
+    var vt = istClockFromIso(pv.field_valid_time_utc);
+    var age = (pv.field_age_vs_reference_hours == null)
+      ? null : pv.field_age_vs_reference_hours.toFixed(1) + " h";
+    var same = pv.identical_to_plus_2h === true;
+    var accent = same ? "#f59e0b" : "#94a3b8";
+    return '' +
+      '<div style="background:#0b1220;border:1px solid ' + accent + '44;border-radius:6px;padding:6px;margin-bottom:6px;font-size:9px;line-height:1.45;color:#94a3b8;">' +
+        '<div style="color:' + accent + ';font-weight:bold;font-size:10px;margin-bottom:2px;">NOW field provenance</div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>Field valid at</span><strong style="color:#cbd5e1;">' + vt + '</strong></div>' +
+        (age ? '<div style="display:flex;justify-content:space-between;"><span>Behind wall clock by</span><strong style="color:#cbd5e1;">' + age + '</strong></div>' : '') +
+        (same ? '<div style="margin-top:3px;">Identical to the +2 h field: GFS publishes analyses every 6 h, so the 2-hour-earlier input window resolved to the same cycle. Read NOW as the earliest available forecast step, not a real-time observation.</div>' : '') +
+      '</div>';
+  }
+
   function handleMapClick(e) {
     if (!e || !e.latlng) return;
 
@@ -3980,6 +4273,8 @@
               statusPill +
             '</div>' +
             '<div style="font-size:10px;color:#94a3b8;margin-bottom:6px;">Grid Cell: ' + (data.grid_cell ? data.grid_cell.lat.toFixed(2) + '°N, ' + data.grid_cell.lon.toFixed(2) + '°E' : lat.toFixed(2) + '°N, ' + lon.toFixed(2) + '°E') + '</div>' +
+            nowEvidenceHtml(data.now_evidence) +
+            nowProvenanceHtml(data.now_provenance) +
             liveSection +
             '<div style="background:#0f172a;border-radius:6px;padding:6px;border:1px solid #1e293b;margin-bottom:6px;font-size:11px;">' +
               '<div style="color:#e2e8f0;font-weight:bold;margin-bottom:4px;font-size:10px;">StormSense Predictions:</div>' +
@@ -4349,7 +4644,11 @@
       // Built on first visit, not at page load, so RainViewer tiles are only
       // ever fetched when the user is actually looking at the radar view.
       if (!window.stormSenseRadarMap) {
-        initRadarMap(window.StormSenseDashboardData || null);
+        // Gated on the SDK for the same reason as the dashboard map: it now
+        // loads asynchronously and may be on a failover key.
+        whenMapsReady(function () {
+          initRadarMap(window.StormSenseDashboardData || null);
+        });
       } else {
         // Map already exists from an earlier visit: re-apply the CURRENT mode's
         // semantics, since initRadarMap() short-circuits and would leave live
@@ -4720,6 +5019,19 @@
           + "Showing state-wide monitoring instead.";
       }
       if (window.stormSenseMap) removeLiveLocationMarker(window.stormSenseMap);
+      // The COORDINATES are unknown, but the conditions cards are not
+      // location-exclusive -- they fall back to the state-wide query. Returning
+      // here without painting them left Temperature / Rainfall / Humidity /
+      // Wind frozen on their "..." placeholder for anyone who denies or cannot
+      // provide geolocation, which is the default in most privacy settings.
+      // Paint them from the state-wide fallback so the panel always states
+      // either a real value or an explicit "—", never a loading ellipsis.
+      paintHorizonConditions();
+      // The three risk meters ARE location-exclusive -- they describe the
+      // viewer's own coordinates -- so there is no honest state-wide value to
+      // substitute. Reset them to "—" instead of leaving the "..." placeholder,
+      // which read as "still loading" forever for anyone who denies location.
+      applyPointRiskMeters(null);
       return Promise.resolve(null);
     }
 
@@ -4793,6 +5105,58 @@
   // -----------------------------------------------------------------------------
   // DOM Initialization
   // -----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Google Maps readiness gate.
+  //
+  // index.html loads the SDK asynchronously and fails over between keys when one
+  // hits its daily quota, so `google.maps` can appear late (or, if every key is
+  // exhausted, never). Callers register here instead of assuming the SDK exists.
+  // ---------------------------------------------------------------------------
+  function whenMapsReady(fn) {
+    if (window.STORMSENSE_MAPS_READY && typeof google !== "undefined" && google.maps) {
+      fn();
+      return;
+    }
+    if (window.STORMSENSE_MAPS_EXHAUSTED) {
+      showMapsUnavailable();
+      return;
+    }
+    document.addEventListener("stormsense:maps-ready", function once() {
+      document.removeEventListener("stormsense:maps-ready", once);
+      fn();
+    });
+    document.addEventListener("stormsense:maps-exhausted", function once() {
+      document.removeEventListener("stormsense:maps-exhausted", once);
+      showMapsUnavailable();
+    });
+  }
+
+  // Replace Google's bare "Oops! Something went wrong." panel with an accurate
+  // statement of what failed. The rest of the dashboard keeps working: the base
+  // map is a rendering surface, not a data source, so risk values, cards,
+  // advisories and popup data are unaffected by a Maps quota exhaustion.
+  function showMapsUnavailable() {
+    var st = window.STORMSENSE_MAPS_KEY_STATE || { total: 0 };
+    ["map-radar-placeholder", "radar-map-container"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML =
+        '<div style="height:100%;display:flex;align-items:center;justify-content:center;padding:18px;' +
+        'background:#0f172a;border-radius:10px;">' +
+          '<div style="font-family:monospace;font-size:12px;color:#f8fafc;max-width:430px;text-align:center;">' +
+            '<div style="color:#fbbf24;font-weight:bold;margin-bottom:6px;">BASE MAP UNAVAILABLE</div>' +
+            '<div style="color:#94a3b8;font-size:11px;line-height:1.55;">' +
+              'All ' + st.total + ' configured Google Maps key(s) hit their daily quota or were rejected, ' +
+              'so the base map cannot be drawn. ' +
+              '<strong style="color:#cbd5e1;">This is a Google Maps account limit, not a StormSense data problem.</strong><br><br>' +
+              'Forecast values, hazard cards, district advisories and point queries are unaffected ' +
+              'and remain live — only the map imagery is missing.' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     // Start real-time IST clock ticker (every 1 second)
     updateIstClock();
@@ -4808,7 +5172,15 @@
       }
 
       // Initialize the dashboard's Interactive Nowcasting Map.
-      initMap(data);
+      //
+      // The Maps SDK is now loaded ASYNCHRONOUSLY with per-key failover (see the
+      // loader in index.html), because Google's daily quota is per key and an
+      // exhausted key fails inside the SDK rather than as an HTTP error. That
+      // means `google.maps` may not exist yet when DOMContentLoaded fires, and
+      // may arrive later on a second key. Build the map only once the SDK is
+      // genuinely ready, so a failover still produces a working map instead of
+      // a silently dead one.
+      whenMapsReady(function () { initMap(data); });
       // The Radar & Satellite Feeds map is NOT initialised here. Building it
       // eagerly started its RainViewer tile fetches while the user was still on
       // the Dashboard, so a network trace showed the dashboard pulling radar
@@ -5046,13 +5418,31 @@
     if (typeof window.setForecastHorizon === "function") {
       var curLead = (window.currentLeadHours === "now" || window.currentLeadHours == null)
         ? 0 : window.currentLeadHours;
-      window.setForecastHorizon(null, null, curLead);
+
+      // ORDER IS LOAD-BEARING: fetch the new area's observations BEFORE
+      // repainting the horizon.
+      //
       // The observed-conditions strip is fed by /api/live/surface, which is
-      // keyed on coordinates rather than district, so it needs its own re-fetch
-      // for the newly selected area (setForecastHorizon does not pull it).
+      // keyed on COORDINATES, not district, so it needs its own re-fetch for a
+      // newly selected area. Previously setForecastHorizon() ran first and
+      // synchronously repainted that strip from the cached
+      // window.StormSenseLiveSurface -- i.e. the PREVIOUS area's payload --
+      // and that paint landed after the fetch had been kicked off but before it
+      // resolved. The visible result was a strip permanently one selection
+      // behind: choosing Cooch Behar showed Birbhum's readings, then Bankura
+      // showed Cooch Behar's, and so on. Verified against the API, which
+      // returns genuinely different values per district (Bankura 81% RH /
+      // 6.8 km/h vs the state default 100% / 0.0 km/h).
+      //
+      // Refreshing the cache first means the horizon repaint reads the area the
+      // user actually selected. The fetch is defensive: if it fails, the
+      // horizon still repaints rather than leaving the dashboard unresponsive.
+      var repaint = function () { window.setForecastHorizon(null, null, curLead); };
       if (window.stormSenseMode === "live"
           && typeof window.fetchLiveSurfaceData === "function") {
-        window.fetchLiveSurfaceData(true);
+        window.fetchLiveSurfaceData(true).then(repaint, repaint);
+      } else {
+        repaint();
       }
     }
     return true;
