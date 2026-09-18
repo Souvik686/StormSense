@@ -808,7 +808,7 @@
   "use strict";
 
   var viewIds = ["dashboard", "radar", "advisories", "wrf", "xai", "gis", "threshold", "streams"];
-  var API_BASE = "";
+  var API_BASE = (window.location.port === "8000" || window.location.origin.indexOf(":8000") !== -1) ? "" : "http://127.0.0.1:8000";
 
   // Mode detection: default is "live", switchable to "historical"
   function detectInitialMode() {
