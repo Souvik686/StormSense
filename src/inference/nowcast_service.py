@@ -475,21 +475,45 @@ class NowcastService:
             import datetime
             from datetime import timedelta
             
+            # TIMESTAMP SEMANTICS (load-bearing -- do not revert to `t0`).
+            #
+            # The predictor turns `timestamp` into the model's hour-of-day /
+            # day-of-year channels, and it derives the six slots' hours as
+            # (ts.hour + [-5..0]) -- i.e. it assumes `timestamp` is the instant
+            # the LAST INPUT SLOT was observed. Training builds those channels
+            # from the real timestamps of the six input slots
+            # (src/data/dataset_v2.py: `times_window = self.times[start:end]`).
+            #
+            # The six live slots end at `analysis_t0` (the real GFS f000
+            # analysis), NOT at `t0` (wall-clock). Passing `t0` told the model
+            # the atmosphere it is reading was observed `wallclock_age_hours`
+            # later than it actually was -- routinely 6-11h, because of GFS
+            # production lag. That desynchronized the diurnal channels from the
+            # physical fields and moved the prediction in BOTH directions
+            # (measured on the 17 Sep 2026 cached cycles: -1.9 pp to +10.1 pp at
+            # Kolkata; domain-max 8.7% -> 85.9% on identical tensors). It also
+            # made the map drift on its own between GFS cycles, because the
+            # 5-minute refresh re-ran the same tensors with an advancing clock.
+            #
+            # `analysis_t0` is the only value consistent with how the channels
+            # were trained. The wall-clock reference instant is still reported
+            # separately as `live_reference_time` -- this changes what the model
+            # is TOLD about its input, not what the forecast is issued for.
             harmonized = gfs_live.fetch_and_harmonize(self.lats, self.lons, target_t0=target_t0)
             preds_dict = self.predictor.predict(
                 surface=harmonized.surface,
                 pressure=harmonized.pressure,
                 dem=self._get_static_dem_meters(),
-                timestamp=harmonized.t0.isoformat(),
+                timestamp=harmonized.analysis_t0.isoformat(),
             )
-            
+
             # Fetch for T-2h to get the valid T=0 prediction (lead 2)
             harmonized_now = gfs_live.fetch_and_harmonize(self.lats, self.lons, target_t0=target_t0 - timedelta(hours=2))
             preds_dict_now = self.predictor.predict(
                 surface=harmonized_now.surface,
                 pressure=harmonized_now.pressure,
                 dem=self._get_static_dem_meters(),
-                timestamp=harmonized_now.t0.isoformat(),
+                timestamp=harmonized_now.analysis_t0.isoformat(),
             )
             
             import numpy as np
@@ -1093,6 +1117,15 @@ class NowcastService:
             lead_time_hours=lead_hours,
             lead_idx=li,
             as_polygon=as_polygon,
+            # Live: the real GFS f000 analysis the input came from, which lags
+            # the issue time by the production lag. Historical: the case study's
+            # analysis time IS its issue time, so the two coincide and no
+            # separate age is reported.
+            analysis_time=(
+                self.live_analysis_time
+                if self._resolve_mode(mode) == "live"
+                else None
+            ),
         )
 
     def get_risk_surface_png(self, lead_hours: int = 2, mode: Optional[str] = None) -> bytes:
