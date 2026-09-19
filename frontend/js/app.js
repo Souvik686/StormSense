@@ -1174,11 +1174,30 @@
   // Live Surface Observation & Data Health Ingest (Every 60 Seconds)
   // -----------------------------------------------------------------------------
   window.fetchLiveSurfaceData = function (isManual) {
-    return fetch(API_BASE + "/api/live/surface" + areaCoordQS())
+    // USER'S CURRENT LOCATION, not the selected area: this payload paints the
+    // Current Location panel's CURRENT OBSERVATIONS strip. See userCoordQS().
+    var coordQS = userCoordQS();
+    return fetch(API_BASE + "/api/live/surface" + coordQS)
       .then(parseJson)
       .then(function (data) {
         if (!data) return;
-        window.StormSenseLiveSurface = data;
+        // Record whether THIS request actually carried the user's coordinates,
+        // so the source line can attribute the reading correctly even if
+        // geolocation resolves while the request is still in flight.
+        data._atUserCoords = (coordQS !== "");
+        // Never let a coordinate-less response replace one that really is at the
+        // user's coordinates. Bootstrap and refresh can both issue a query
+        // before geolocation has resolved; when such a response landed last it
+        // reverted the panel to the backend's default station (22.724/88.479).
+        if (!(window.StormSenseLiveSurface
+              && window.StormSenseLiveSurface._atUserCoords)
+            || data._atUserCoords) {
+          window.StormSenseLiveSurface = data;
+        } else {
+          // A stale default-station reply: keep the good payload and repaint
+          // from it, so the panel still refreshes rather than freezing.
+          data = window.StormSenseLiveSurface;
+        }
 
         // OBSERVED TIMESTAMP MUST NOT GO BACKWARDS (CHANGE 5).
         //
@@ -1220,6 +1239,45 @@
         console.warn("Live surface fetch error:", err);
       });
   };
+
+  /**
+   * Observations for the SELECTED AREA, feeding the wide "Current observed
+   * conditions" strip.
+   *
+   * DELIBERATELY SEPARATE from fetchLiveSurfaceData(), which serves the Current
+   * Location panel at the USER'S coordinates. The two panels answer different
+   * questions and must not share a payload:
+   *
+   *   Current Location -> "what is the weather where I am?"      (userCoordQS)
+   *   Current observed -> "what is the weather in the area I am  (areaCoordQS)
+   *                        inspecting?" -- Whole State, Bankura, ...
+   *
+   * Feeding both from the user's payload made them show identical numbers, so
+   * the area strip silently stopped describing the selected area.
+   *
+   * areaCoordQS() returns "" for the whole-state selection, which is correct:
+   * the backend then answers from its own regional station, which IS the
+   * state-level reading this strip should show.
+   */
+  window.fetchAreaSurfaceData = function () {
+    var qs = areaCoordQS();
+    return fetch(API_BASE + "/api/live/surface" + qs)
+      .then(parseJson)
+      .then(function (data) {
+        if (!data) return null;
+        window.StormSenseAreaSurface = data;
+        if (window.stormSenseMode === "live"
+            && typeof renderNowcastLive === "function") {
+          renderNowcastLive(data);
+        }
+        return data;
+      })
+      .catch(function (err) {
+        console.warn("Area surface fetch error:", err);
+        return null;
+      });
+  };
+  var fetchAreaSurfaceData = window.fetchAreaSurfaceData;
 
   /**
    * Five-minute live refresh. Updates current observations AND the forecast
@@ -1641,7 +1699,20 @@
         : fetch(API_BASE + "/api/weather/current").then(parseJson).catch(function () { return null; });
     var fetchSurface = (window.stormSenseMode === "historical") 
         ? Promise.resolve(null) 
-        : fetch(API_BASE + "/api/live/surface" + areaCoordQS()).then(parseJson).catch(function () { return null; });
+        // Current Location panel observations -> user's coordinates, never the
+        // selected area's. See userCoordQS(). The _atUserCoords flag lets the
+        // source line attribute the reading honestly when geolocation has not
+        // resolved yet and the backend answers from its default station.
+        : (function () {
+            var qs = userCoordQS();
+            return fetch(API_BASE + "/api/live/surface" + qs)
+              .then(parseJson)
+              .then(function (d) {
+                if (d) d._atUserCoords = (qs !== "");
+                return d;
+              })
+              .catch(function () { return null; });
+          })();
 
     return Promise.all([
       fetchCurrent,
@@ -1682,7 +1753,21 @@
         window.StormSenseStateBoundaryData = stateBoundary;
         window.StormSenseBenchmarkData = benchmark;
         window.StormSenseHighRiskCells = highRiskCells;
-        window.StormSenseLiveSurface = liveSurface;
+        // DO NOT clobber a user-coordinate payload with a coordinate-less one.
+        //
+        // This bootstrap fetch is issued before geolocation resolves, so it
+        // carries no lat/lon and the backend answers from its default station.
+        // acquireLiveLocation() then re-fetches at the user's real coordinates.
+        // Those two land in a race, and when this assignment won, the Current
+        // Location panel fell back to the default station's readings (observed
+        // as 22.724/88.479 replacing a good 22.495/88.3093 payload).
+        //
+        // Keep whichever payload actually carries the user's coordinates.
+        if (!(window.StormSenseLiveSurface
+              && window.StormSenseLiveSurface._atUserCoords)
+            || (liveSurface && liveSurface._atUserCoords)) {
+          window.StormSenseLiveSurface = liveSurface;
+        }
         window.StormSenseDataHealth = dataHealth;
 
         // Ensure sidebar views (advisories, benchmarks, XAI) are pre-populated for immediate viewing in both modes
@@ -2431,9 +2516,21 @@
     setText("bind-humidity", obs.humidity_pct != null ? obs.humidity_pct + "%" : "—");
     setText("bind-wind", obsText(obs.wind_speed_kmh, 1, " km/h"));
 
-    var liveSourceLabel = rawLive && rawLive.is_stale
-      ? "Surface observation · stale"
-      : "Surface observation";
+    // Say WHOSE observation this is. When the user's coordinates are not known
+    // at query time the request carries no lat/lon and the backend answers from
+    // its own default station, which is NOT the user's location -- labelling
+    // that plain "Surface observation" left it ambiguous whether the readings
+    // were local. The values are real either way; only their attribution
+    // differs.
+    //
+    // This reads the flag stamped on THIS payload by fetchLiveSurfaceData, not
+    // the current global: geolocation can resolve while a coordinate-less
+    // request is still in flight, and that late response must still be
+    // labelled for the station it actually came from.
+    var liveSourceLabel = ((rawLive && rawLive._atUserCoords)
+        ? "Surface observation"
+        : "Surface observation · regional station")
+      + (rawLive && rawLive.is_stale ? " · stale" : "");
     setText("bind-temp-source", liveSourceLabel);
     setText("bind-rain-source", liveSourceLabel);
     setText("bind-humidity-source", liveSourceLabel);
@@ -2457,8 +2554,14 @@
     var profLevel = document.getElementById("profile-level");
     if (profLevel) profLevel.innerHTML = '<span class="size-2 bg-emerald-400 rounded-full animate-pulse"></span> LIVE MONITORING';
 
-    // Render Live timeline cards
-    renderNowcastLive(rawLive);  // sets its own title/badge
+    // Render Live timeline cards.
+    //
+    // NOT `rawLive`. That payload is the USER'S CURRENT LOCATION observation and
+    // belongs to the Current Location panel above. The wide "Current observed
+    // conditions" strip describes the SELECTED AREA (Whole State, or whichever
+    // district is chosen), so it has its own area-keyed payload and its own
+    // fetch. Passing rawLive here made both panels show identical numbers.
+    fetchAreaSurfaceData();
 
     // Render Live High-Risk Grid notice
     renderHighRiskCellsLive();
@@ -2952,9 +3055,10 @@
     // so it kept the stale "0-6 hour outlook" heading with no cards under it.
     // The observed values are the same in every horizon (they are observations,
     // not forecasts); only the map, hazard cards and popup follow the horizon.
-    if (window.stormSenseMode === "live" && window.StormSenseLiveSurface
+    // The SELECTED AREA's payload, not the user's -- this strip is area-scoped.
+    if (window.stormSenseMode === "live" && window.StormSenseAreaSurface
         && typeof renderNowcastLive === "function") {
-      renderNowcastLive(window.StormSenseLiveSurface);
+      renderNowcastLive(window.StormSenseAreaSurface);
     }
     return;
   }
@@ -4273,8 +4377,19 @@
               statusPill +
             '</div>' +
             '<div style="font-size:10px;color:#94a3b8;margin-bottom:6px;">Grid Cell: ' + (data.grid_cell ? data.grid_cell.lat.toFixed(2) + '°N, ' + data.grid_cell.lon.toFixed(2) + '°E' : lat.toFixed(2) + '°N, ' + lon.toFixed(2) + '°E') + '</div>' +
-            nowEvidenceHtml(data.now_evidence) +
-            nowProvenanceHtml(data.now_provenance) +
+            // The NOW observation-evidence and NOW field-provenance blocks are
+            // deliberately NOT rendered in the map-click popup. They only exist
+            // at lead 0 (the backend gates them to NOW), so the NOW popup grew
+            // several times taller than the +2h/+4h/+6h popup and buried the
+            // model prediction it is meant to show. This popup is now the same
+            // compact, prediction-focused card at every horizon.
+            //
+            // The data is NOT removed: `data.now_evidence` and
+            // `data.now_provenance` are still requested and still returned by
+            // /api/nowcast/point, nowEvidenceHtml()/nowProvenanceHtml() are
+            // retained, and the NOW provenance line remains rendered in the
+            // dashboard's own #obs-provenance element. Only this popup's
+            // verbosity changed.
             liveSection +
             '<div style="background:#0f172a;border-radius:6px;padding:6px;border:1px solid #1e293b;margin-bottom:6px;font-size:11px;">' +
               '<div style="color:#e2e8f0;font-weight:bold;margin-bottom:4px;font-size:10px;">StormSense Predictions:</div>' +
@@ -4992,6 +5107,20 @@
             source: "device GPS",
             acquired_at: new Date().toISOString()
           };
+          // ORDER GAP, now closed. loadDashboardData() fetches /api/live/surface
+          // during bootstrap, BEFORE this callback runs, so userCoordQS() was
+          // still empty and the backend answered from its OWN default station
+          // (22.724, 88.479) -- a different place from the user. The Current
+          // Location panel therefore opened showing another location's
+          // temperature / humidity / wind under the user's own heading.
+          //
+          // Now that the real coordinates are known, re-fetch the observation
+          // strip against them. Safe from recursion: this runs inside the
+          // geolocation callback, which fetchLiveSurfaceData() never triggers.
+          if (window.stormSenseMode === "live"
+              && typeof window.fetchLiveSurfaceData === "function") {
+            window.fetchLiveSurfaceData(false);
+          }
           resolve(window.StormSenseUserLocation);
         },
         function (err) {
@@ -5419,28 +5548,25 @@
       var curLead = (window.currentLeadHours === "now" || window.currentLeadHours == null)
         ? 0 : window.currentLeadHours;
 
-      // ORDER IS LOAD-BEARING: fetch the new area's observations BEFORE
-      // repainting the horizon.
+      // Re-fetch the AREA observation strip for the newly selected area, then
+      // repaint the horizon.
       //
-      // The observed-conditions strip is fed by /api/live/surface, which is
-      // keyed on COORDINATES, not district, so it needs its own re-fetch for a
-      // newly selected area. Previously setForecastHorizon() ran first and
-      // synchronously repainted that strip from the cached
-      // window.StormSenseLiveSurface -- i.e. the PREVIOUS area's payload --
-      // and that paint landed after the fetch had been kicked off but before it
-      // resolved. The visible result was a strip permanently one selection
-      // behind: choosing Cooch Behar showed Birbhum's readings, then Bankura
-      // showed Cooch Behar's, and so on. Verified against the API, which
-      // returns genuinely different values per district (Bankura 81% RH /
-      // 6.8 km/h vs the state default 100% / 0.0 km/h).
+      // ONLY the area strip. fetchLiveSurfaceData() is NOT called here: that one
+      // serves the Current Location panel at the USER'S coordinates, and calling
+      // it on an area jump (as this code used to, via areaCoordQS) is precisely
+      // what overwrote the user's own Temperature / Rainfall / Humidity / Wind
+      // with the selected district's station readings. The user has not moved,
+      // so their observations cannot have changed.
       //
-      // Refreshing the cache first means the horizon repaint reads the area the
-      // user actually selected. The fetch is defensive: if it fails, the
-      // horizon still repaints rather than leaving the dashboard unresponsive.
+      // ORDER IS LOAD-BEARING: refresh the area payload BEFORE the horizon
+      // repaint, because setForecastHorizon() synchronously repaints this strip
+      // from the cached window.StormSenseAreaSurface. Without the ordering the
+      // strip stays one selection behind. The fetch is defensive: if it fails,
+      // the horizon still repaints rather than leaving the dashboard stuck.
       var repaint = function () { window.setForecastHorizon(null, null, curLead); };
       if (window.stormSenseMode === "live"
-          && typeof window.fetchLiveSurfaceData === "function") {
-        window.fetchLiveSurfaceData(true).then(repaint, repaint);
+          && typeof window.fetchAreaSurfaceData === "function") {
+        window.fetchAreaSurfaceData().then(repaint, repaint);
       } else {
         repaint();
       }
@@ -5485,6 +5611,36 @@
     if (!isFinite(lat) || !isFinite(lon)) return "";
     return "?lat=" + lat.toFixed(4) + "&lon=" + lon.toFixed(4);
   }
+
+  /**
+   * Coordinates of the USER'S CURRENT LOCATION for the observation endpoint that
+   * feeds the Current Location panel.
+   *
+   * This is deliberately NOT areaCoordQS(). /api/live/surface paints the panel's
+   * CURRENT OBSERVATIONS strip (Temperature / Rainfall / Humidity / Wind), and
+   * that strip belongs to the user's own position. Querying it with the SELECTED
+   * AREA's centre made selecting Bankura or Kolkata rewrite those four readings
+   * to that district's station -- verified against the API, which returns
+   * genuinely different values per coordinate (South 24 Parganas 1.4 km/h /
+   * 92% RH vs Kolkata 0.0 km/h / 100% RH at the same instant). The panel then
+   * reported another district's weather under the user's own location heading.
+   *
+   * CURRENT LOCATION and SELECTED MAP AREA are separate concepts with separate
+   * state: window.StormSenseUserLocation vs window.StormSenseSelectedArea.
+   * Changing the selected area must never reach this function.
+   *
+   * Returns "" when the user's location is unknown (geolocation denied or not
+   * yet resolved) so the backend keeps its own default station, rather than
+   * silently substituting the selected area.
+   */
+  function userCoordQS() {
+    var u = window.StormSenseUserLocation;
+    if (!u || u.lat == null || u.lon == null) return "";
+    var lat = Number(u.lat), lon = Number(u.lon);
+    if (!isFinite(lat) || !isFinite(lon)) return "";
+    return "?lat=" + lat.toFixed(4) + "&lon=" + lon.toFixed(4);
+  }
+  window.userCoordQS = userCoordQS;
 
   // ---------------------------------------------------------------------------
   // Unified refresh control (single timer, single manual trigger)
