@@ -212,9 +212,10 @@
 </div>
 <span class="bg-red-900/80 px-2 py-0.5 rounded text-[11px]">T-MINUS 68 MIN</span>
 </div>
-<!-- Doppler Radar Image Overlay using https://lh3.googleusercontent.com/aida/AEtjO1VFDstciX7mwHX3sVEWtR8azqiUeESxSGZJYDSIAz7DRh-iQU_-O7G2JBEssJlCdkL5JlzH24wrq5wrG6vV4rdDUT6FxFRMl5KCZWR2ffW0M7IVNFhCpAaibJSgXn4IFk4JNVKRqPFw3AviqHI8a132LCjY8qfIeebSY7FWTHhbRjEPfSS2lkOrx96D3cexHTRjC2sO-hLh649r7pgcufbj132Bbju-PppmfVWjcfV3BtYQW0lAPqV5qClj -->
+<!-- Doppler Radar Image Overlay -->
 <div class="relative w-full aspect-[4/3] bg-slate-950 overflow-hidden group">
-<img alt="Doppler Weather Radar Reflectivity Map of West Bengal showing hook echo convective storm cell" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" src="D:\StormSense\StormSense\Screenshot 2026-09-19 100913.png">
+<img alt="Doppler Weather Radar Reflectivity Map of West Bengal showing hook echo convective storm cell" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" src="/static/radar-hero.png"/>
+<!-- Top Left Telemetry HUD -->
 <div class="absolute top-3 left-3 bg-[#0b101d]/90 backdrop-blur-md px-3 py-2 rounded border border-slate-700/80 text-[11px] font-mono text-slate-200 shadow-lg space-y-0.5">
 <div class="text-sky-400 font-bold flex items-center gap-1.5">
 <span class="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
@@ -431,11 +432,11 @@
 <span>STREAM SYNCED (30s REFRESH)</span>
 </div>
 </div>
-<!-- Large Radar Viewer Display using https://lh3.googleusercontent.com/aida/AEtjO1VFDstciX7mwHX3sVEWtR8azqiUeESxSGZJYDSIAz7DRh-iQU_-O7G2JBEssJlCdkL5JlzH24wrq5wrG6vV4rdDUT6FxFRMl5KCZWR2ffW0M7IVNFhCpAaibJSgXn4IFk4JNVKRqPFw3AviqHI8a132LCjY8qfIeebSY7FWTHhbRjEPfSS2lkOrx96D3cexHTRjC2sO-hLh649r7pgcufbj132Bbju-PppmfVWjcfV3BtYQW0lAPqV5qClj -->
+<!-- Large Radar Viewer Display -->
 <div class="rounded-2xl bg-slate-900 border border-sky-500/40 p-4 md:p-6 shadow-2xl">
 <!-- Radar Window -->
-<div class="relative w-full aspect-[16/9] md:aspect-[21/10] bg-slate-950 rounded-xl overflow-hidden border border-slate-800">
-<img alt="High-resolution Doppler radar meteorological reflectivity map focused on West Bengal" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida/AEtjO1VFDstciX7mwHX3sVEWtR8azqiUeESxSGZJYDSIAz7DRh-iQU_-O7G2JBEssJlCdkL5JlzH24wrq5wrG6vV4rdDUT6FxFRMl5KCZWR2ffW0M7IVNFhCpAaibJSgXn4IFk4JNVKRqPFw3AviqHI8a132LCjY8qfIeebSY7FWTHhbRjEPfSS2lkOrx96D3cexHTRjC2sO-hLh649r7pgcufbj132Bbju-PppmfVWjcfV3BtYQW0lAPqV5qClj"/>
+<div class="relative w-full aspect-[16/9] md:aspect-[16/9] bg-slate-950 rounded-xl overflow-hidden border border-slate-800">
+<img alt="High-resolution Doppler radar meteorological reflectivity map focused on West Bengal" class="w-full h-full object-contain" src="/static/radar-live-wb.png"/>
 <!-- Top Header Overlay Controls inside Viewer -->
 <div class="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
 <div class="bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded border border-slate-700/80 text-xs font-mono text-slate-200 pointer-events-auto">
@@ -452,23 +453,23 @@
 <div class="absolute bottom-3 left-3 bg-slate-950/90 backdrop-blur-md p-2.5 rounded-lg border border-slate-700/80 text-xs font-mono">
 <div class="flex items-center justify-between text-[10px] text-slate-300 mb-1">
 <span>REFLECTIVITY (dBZ)</span>
-<span class="text-rose-400 font-bold">PEAK 64.2 dBZ</span>
+<span class="text-red-400 font-bold">PEAK 55.6 dBZ</span>
 </div>
 <div class="w-48 sm:w-64 h-3 rounded flex overflow-hidden border border-slate-700">
-<div class="h-full w-[15%] bg-emerald-500" title="0-15 dBZ"></div>
-<div class="h-full w-[20%] bg-emerald-400" title="15-30 dBZ"></div>
-<div class="h-full w-[25%] bg-amber-400" title="30-45 dBZ"></div>
-<div class="h-full w-[20%] bg-orange-500" title="45-55 dBZ"></div>
-<div class="h-full w-[12%] bg-rose-600" title="55-65 dBZ"></div>
-<div class="h-full w-[8%] bg-purple-600" title="65-70+ dBZ"></div>
+<div class="h-full w-[20%]" style="background:#38bdf8" title="5-15 dBZ — light"></div>
+<div class="h-full w-[20%]" style="background:#22b3b0" title="15-25 dBZ — light rain"></div>
+<div class="h-full w-[20%]" style="background:#5fa83c" title="25-35 dBZ — moderate"></div>
+<div class="h-full w-[15%]" style="background:#e0b515" title="35-45 dBZ — heavy"></div>
+<div class="h-full w-[15%]" style="background:#e07b16" title="45-52 dBZ — very heavy"></div>
+<div class="h-full w-[10%]" style="background:#d1341a" title="52-60 dBZ — intense core"></div>
 </div>
 <div class="flex justify-between text-[9px] text-slate-400 mt-1">
-<span>0</span>
-<span>20</span>
-<span>40</span>
-<span>50</span>
-<span>60</span>
-<span>70 dBZ</span>
+<span>5</span>
+<span>15</span>
+<span>25</span>
+<span>35</span>
+<span>45</span>
+<span>60 dBZ</span>
 </div>
 </div>
 </div>
@@ -779,7 +780,7 @@
 <!-- Radar Mini View Right -->
 <div class="lg:col-span-5 flex flex-col gap-2">
 <div class="relative w-full aspect-video rounded-lg overflow-hidden border border-slate-700 bg-slate-950">
-<img alt="Doppler radar cross section" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida/AEtjO1VFDstciX7mwHX3sVEWtR8azqiUeESxSGZJYDSIAz7DRh-iQU_-O7G2JBEssJlCdkL5JlzH24wrq5wrG6vV4rdDUT6FxFRMl5KCZWR2ffW0M7IVNFhCpAaibJSgXn4IFk4JNVKRqPFw3AviqHI8a132LCjY8qfIeebSY7FWTHhbRjEPfSS2lkOrx96D3cexHTRjC2sO-hLh649r7pgcufbj132Bbju-PppmfVWjcfV3BtYQW0lAPqV5qClj"/>
+<img alt="Doppler radar cross section" class="w-full h-full object-cover" src="/static/radar-hero.png"/>
 <div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-950/80 font-mono text-[10px] text-sky-400 border border-slate-700">
               ECHO CROSS-SECTION: SECTOR WB-CENTRAL
             </div>
