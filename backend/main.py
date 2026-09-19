@@ -323,6 +323,16 @@ async def current_weather(
         rain = data.get("rain", {})
         rainfall_1h = rain.get("1h", 0.0)
 
+        # A GENUINE calm (the provider really does report {"speed": 0, "deg": 0}
+        # at some stations) must survive as 0.0, but an ABSENT reading must not be
+        # manufactured into one. The previous `.get("speed", 0.0)` collapsed both
+        # into an identical "0.0 km/h", making a missing measurement
+        # indistinguishable from a measured calm. Missing now stays null and the
+        # UI renders "—".
+        _wind = data.get("wind") or {}
+        _wind_ms = _wind.get("speed")
+        _wind_deg = _wind.get("deg")
+
         return {
             "source": "Live Station Observation (Live Station API)",
             "location": "West Bengal",
@@ -332,8 +342,8 @@ async def current_weather(
             "feels_like": data["main"]["feels_like"],
             "humidity": data["main"]["humidity"],
             "pressure": data["main"]["pressure"],
-            "wind_speed": round(data.get("wind", {}).get("speed", 0.0) * 3.6, 1),
-            "wind_direction": data.get("wind", {}).get("deg", 0),
+            "wind_speed": round(float(_wind_ms) * 3.6, 1) if _wind_ms is not None else None,
+            "wind_direction": _wind_deg,
             "visibility": (
                 round(data.get("visibility", 0) / 1000.0, 1)
                 if data.get("visibility") is not None
