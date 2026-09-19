@@ -21,6 +21,34 @@ window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
 (function () {
   var keys = Array.isArray(window.STORMSENSE_MAPS_KEYS) ? window.STORMSENSE_MAPS_KEYS.slice() : [];
   if (!keys.length) { console.error("[maps] no Google Maps key configured"); return; }
+
+  // Keys already known to be quota-exhausted in THIS browser session are skipped
+  // up front, so a reload does not start again on a key that just failed.
+  var BURNED = "stormsense.maps.burnedKeys";
+  function burned() {
+    try { return JSON.parse(sessionStorage.getItem(BURNED) || "[]") || []; }
+    catch (e) { return []; }
+  }
+  function markBurned(k) {
+    try {
+      var b = burned();
+      if (b.indexOf(k) === -1) { b.push(k); sessionStorage.setItem(BURNED, JSON.stringify(b)); }
+    } catch (e) {}
+  }
+  var alreadyBurned = burned();
+  var usable = keys.filter(function (k) { return alreadyBurned.indexOf(k) === -1; });
+  if (usable.length) {
+    if (usable.length !== keys.length) {
+      console.info("[maps] skipping " + (keys.length - usable.length) +
+                   " key(s) already exhausted this session");
+    }
+    keys = usable;
+  } else {
+    // Every key burned this session: clear the record and try again from the
+    // top rather than refusing to load a map at all (a quota may have reset).
+    try { sessionStorage.removeItem(BURNED); } catch (e) {}
+  }
+
   var idx = 0;
   window.STORMSENSE_MAPS_KEY_STATE = { total: keys.length, activeIndex: 0, failed: [] };
 
@@ -29,6 +57,18 @@ window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
     try { delete window.google; } catch (e) { window.google = undefined; }
     var old = document.getElementById("gmaps-sdk");
     if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    // NOTE on the "Oops" panel Google paints into the map div:
+    //
+    // On quota failure the SDK writes its own grey "Oops! Something went wrong"
+    // markup INTO the map container before calling gm_authFailure, and removing
+    // the script does not remove that DOM. Clearing the container here is NOT
+    // enough either -- the dashboard authors its map HUD (legend, zoom buttons,
+    // domain toggle) as children of that same div, and initMap() does not
+    // recreate them, so emptying it leaves a blank grey box.
+    //
+    // A key that fails is therefore handled by reloadForKey() below, which
+    // restarts the page on the next key. See that function for why.
   }
 
   function load() {
@@ -52,12 +92,40 @@ window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
     var badIdx = idx;
     window.STORMSENSE_MAPS_KEY_STATE.failed.push({ index: badIdx, reason: reason });
     console.warn("[maps] key #" + (badIdx + 1) + "/" + keys.length + " failed (" + reason + ")");
+
+    var isAuth = reason.indexOf("gm_authFailure") !== -1;
     idx += 1;
+
     if (idx < keys.length) {
       console.warn("[maps] failing over to key #" + (idx + 1) + "/" + keys.length);
+
+      // A gm_authFailure means the SDK has ALREADY painted its grey "Oops!
+      // Something went wrong" panel into the map container and partially
+      // initialised itself. In-place recovery is not reliable: clearing the
+      // container also destroys the dashboard's map HUD (legend, zoom buttons,
+      // domain toggle), which initMap() does not recreate, leaving a blank box.
+      //
+      // Restarting the page on the next key is the one clean path. The burned
+      // key is recorded first, so the reload skips it immediately instead of
+      // failing on it again and looping.
+      if (isAuth) {
+        markBurned(keys[badIdx]);
+        // Guard against a reload loop if something else keeps failing.
+        var n = 0;
+        try { n = parseInt(sessionStorage.getItem("stormsense.maps.reloads") || "0", 10) || 0; } catch (e) {}
+        if (n < keys.length) {
+          try { sessionStorage.setItem("stormsense.maps.reloads", String(n + 1)); } catch (e) {}
+          console.warn("[maps] restarting page on next key (SDK already painted its error panel)");
+          window.location.reload();
+          return;
+        }
+        console.warn("[maps] reload budget spent; continuing in place");
+      }
+
       cleanup();
       load();
     } else {
+      if (isAuth) markBurned(keys[badIdx]);
       load(); // records exhaustion
     }
   }
@@ -67,6 +135,8 @@ window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
 
   window.__stormsenseMapsReady = function () {
     window.STORMSENSE_MAPS_READY = true;
+    // A good load ends the reload budget: the next failure gets a fresh one.
+    try { sessionStorage.removeItem("stormsense.maps.reloads"); } catch (e) {}
     console.info("[maps] loaded with key #" + (idx + 1) + "/" + keys.length);
     document.dispatchEvent(new CustomEvent("stormsense:maps-ready"));
   };
