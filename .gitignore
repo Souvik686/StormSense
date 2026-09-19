@@ -20,6 +20,10 @@ Data/BOUNDARIES/west_bengal_districts_full.geojson
 
 Data/processed/cache/norm_stats.json
 
+.env
+backend/.env
+venv/
+
 # ============================================================
 # ALWAYS IGNORED
 # ============================================================
