@@ -6,23 +6,23 @@
 # PUBLIC MODE — UNCOMMENT THESE
 # ============================================================
 
-# .env
-# **/.env
-# *.env
-# !.env.example
+.env
+**/.env
+*.env
+!.env.example
 
-# Data/outputs/checkpoints/v2_calibrated_best.pt
-# processed/cache/era5_memmap/
+Data/outputs/checkpoints/v2_calibrated_best.pt
+processed/cache/era5_memmap/
 
-# Data/BOUNDARIES/wb_mask_full_300x200.npy
-# Data/BOUNDARIES/west_bengal_full.geojson
-# Data/BOUNDARIES/west_bengal_districts_full.geojson
+Data/BOUNDARIES/wb_mask_full_300x200.npy
+Data/BOUNDARIES/west_bengal_full.geojson
+Data/BOUNDARIES/west_bengal_districts_full.geojson
 
-# Data/processed/cache/norm_stats.json
+Data/processed/cache/norm_stats.json
 
-# .env
-# backend/.env
-# venv/
+.env
+backend/.env
+venv/
 
 # ============================================================
 # ALWAYS IGNORED

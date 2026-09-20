@@ -205,12 +205,12 @@
 <div class="lg:col-span-5 relative">
 <div class="rounded-xl bg-slate-900/95 border border-sky-500/40 overflow-hidden shadow-2xl shadow-sky-950/60">
 <!-- Alert Ribbon Banner -->
-<div class="bg-red-700 px-4 py-2 flex items-center justify-between text-white text-xs font-mono font-bold tracking-wide">
+<div class="bg-emerald-700 px-4 py-2 flex items-center justify-between text-white text-xs font-mono font-bold tracking-wide">
 <div class="flex items-center gap-2">
-<span class="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
-<span>STAGE 4: WB STATE EMERGENCY DISPATCH</span>
+<span class="w-2.5 h-2.5 rounded-full bg-white animate-pulse"></span>
+<span>STAGE 1: ROUTINE STATEWIDE MONITORING</span>
 </div>
-<span class="bg-red-900/80 px-2 py-0.5 rounded text-[11px]">T-MINUS 68 MIN</span>
+<span class="bg-emerald-900/80 px-2 py-0.5 rounded text-[11px]">NO ACTIVE WARNINGS</span>
 </div>
 <!-- Doppler Radar Image Overlay -->
 <div class="relative w-full aspect-[4/3] bg-slate-950 overflow-hidden group">
@@ -222,39 +222,39 @@
                 RADAR: VOHY-KOL &amp; SLG-NORTH
               </div>
 <div class="text-slate-300">GRID: 23/23 WB DISTRICTS</div>
-<div class="text-rose-400 font-semibold">CELL: #WB-CONV-MULTI-07</div>
+<div class="text-emerald-400 font-semibold">CELLS TRACKED: NONE</div>
 </div>
-<!-- Top Right Hook Echo Warning -->
-<div class="absolute top-3 right-3 bg-red-950/90 backdrop-blur-md px-2.5 py-1.5 rounded border border-red-600/80 text-[11px] font-mono text-rose-200 shadow-lg flex items-center gap-1.5">
-<i class="w-3.5 h-3.5 text-amber-400 animate-bounce" data-lucide="alert-triangle"></i>
-<span class="font-bold">HOOK ECHO CONFIRMED</span>
+<!-- Top Right Status Badge -->
+<div class="absolute top-3 right-3 bg-emerald-950/90 backdrop-blur-md px-2.5 py-1.5 rounded border border-emerald-600/80 text-[11px] font-mono text-emerald-200 shadow-lg flex items-center gap-1.5">
+<i class="w-3.5 h-3.5 text-emerald-400" data-lucide="shield-check"></i>
+<span class="font-bold">NO SEVERE SIGNATURE</span>
 </div>
-<!-- Bottom Right Peak Echo Core Readout -->
+<!-- Bottom Right Peak Rainfall Readout -->
 <div class="absolute bottom-3 right-3 bg-[#0b101d]/90 backdrop-blur-md px-3 py-2 rounded border border-slate-700/80 text-right font-mono shadow-lg">
-<span class="text-[10px] text-slate-400 block tracking-wider uppercase">PEAK ECHO CORE</span>
-<span class="text-2xl font-bold text-rose-400 tracking-tight leading-none">64.2 <span class="text-xs text-slate-300 font-normal">dBZ</span></span>
-<span class="text-[10px] text-amber-400 font-bold block mt-0.5">MULTI-DISTRICT SURGE</span>
+<span class="text-[10px] text-slate-400 block tracking-wider uppercase">PEAK STATION RAINFALL (1H)</span>
+<span class="text-2xl font-bold text-sky-400 tracking-tight leading-none">1.78 <span class="text-xs text-slate-300 font-normal">mm</span></span>
+<span class="text-[10px] text-slate-400 font-bold block mt-0.5">BARDHAMAN · LIGHT RAIN</span>
 </div>
 </div>
 <!-- Doppler Status Flight Strip -->
 <div class="p-3.5 bg-slate-900 border-t border-slate-800 space-y-2 font-mono text-xs">
 <div class="flex items-center justify-between text-slate-300">
-<span class="text-slate-400">Statewide Shear Differential:</span>
-<span class="text-sky-400 font-bold">36.2 m/s (Nor'wester / Kalbaishakhi Vector)</span>
+<span class="text-slate-400">Peak Statewide Surface Wind:</span>
+<span class="text-sky-400 font-bold">11.4 km/h (Krishnanagar · light breeze)</span>
 </div>
-<!-- Segmented Confidence Bar -->
+<!-- Segmented Severity Bar -->
 <div class="w-full flex items-center gap-1 h-2">
-<div class="h-full flex-1 bg-rose-500 rounded-l"></div>
-<div class="h-full flex-1 bg-rose-500"></div>
-<div class="h-full flex-1 bg-rose-500"></div>
-<div class="h-full flex-1 bg-rose-500"></div>
-<div class="h-full flex-1 bg-rose-500"></div>
-<div class="h-full flex-1 bg-rose-500"></div>
-<div class="h-full flex-1 bg-rose-500"></div>
+<div class="h-full flex-1 bg-emerald-500 rounded-l"></div>
+<div class="h-full flex-1 bg-emerald-500"></div>
+<div class="h-full flex-1 bg-slate-700"></div>
+<div class="h-full flex-1 bg-slate-700"></div>
+<div class="h-full flex-1 bg-slate-700"></div>
+<div class="h-full flex-1 bg-slate-700"></div>
+<div class="h-full flex-1 bg-slate-700"></div>
 <div class="h-full flex-1 bg-slate-700 rounded-r"></div>
 </div>
 <div class="flex items-center justify-between text-[11px] text-slate-400">
-<span>ENSEMBLE CONSENSUS: <strong class="text-emerald-400">93.8%</strong></span>
+<span>SEVERITY INDEX: <strong class="text-emerald-400">LOW (1/8)</strong></span>
 <span class="text-sky-400 font-mono">TITAN + DeepSCIT WB State v4.4</span>
 </div>
 </div>
@@ -440,12 +440,12 @@
 <!-- Top Header Overlay Controls inside Viewer -->
 <div class="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
 <div class="bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded border border-slate-700/80 text-xs font-mono text-slate-200 pointer-events-auto">
-<span class="text-sky-400 font-bold">RADAR ID: VOHY-KOLKATA</span> | TIME: 16:30 IST | MODE: PPI | ELEV: 0.5°
+<span class="text-sky-400 font-bold">REGIONAL COMPOSITE</span> | MODE: REFLECTIVITY MOSAIC | COVERAGE: WB + NEIGHBOURS
           </div>
 <div class="flex items-center gap-2 pointer-events-auto">
-<span class="px-2.5 py-1 rounded bg-red-950/90 text-rose-300 border border-red-600/80 text-xs font-mono font-bold flex items-center gap-1.5">
-<span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
-              HOOK ECHO DETECTED
+<span class="px-2.5 py-1 rounded bg-emerald-950/90 text-emerald-300 border border-emerald-600/80 text-xs font-mono font-bold flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              NO SEVERE CELLS OVER WB
             </span>
 </div>
 </div>
@@ -509,39 +509,39 @@
 </div>
 <!-- SCIT Convective Cell Tracking Table (7 cols) -->
 <div class="lg:col-span-7">
-<span class="text-xs font-mono uppercase tracking-wider text-rose-400 font-bold block mb-2">ACTIVE SCIT CONVECTIVE CELL TRACKING TABLE</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold block mb-2">STATION RAINFALL LEADERBOARD (LAST HOUR)</span>
 <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">
 <table class="w-full text-left font-mono text-xs">
 <thead class="bg-slate-900 text-slate-400 border-b border-slate-800">
 <tr>
-<th class="p-2.5">Cell ID</th>
-<th class="p-2.5">Location / Sector</th>
-<th class="p-2.5">Peak Echo</th>
-<th class="p-2.5">Motion Vector</th>
-<th class="p-2.5">Severity</th>
+<th class="p-2.5">Station</th>
+<th class="p-2.5">District / Sector</th>
+<th class="p-2.5">Rain (1h)</th>
+<th class="p-2.5">Condition</th>
+<th class="p-2.5">Status</th>
 </tr>
 </thead>
 <tbody class="divide-y divide-slate-800/80 text-slate-300">
-<tr class="bg-rose-950/20">
-<td class="p-2.5 font-bold text-rose-400">#C-04 (Hook)</td>
-<td class="p-2.5">Nadia / Ranaghat / N24P</td>
-<td class="p-2.5 font-bold text-rose-400">64.2 dBZ</td>
-<td class="p-2.5">ESE @ 42 km/h</td>
-<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold">EMERGENCY</span></td>
+<tr>
+<td class="p-2.5 font-bold text-sky-400">Bardhaman</td>
+<td class="p-2.5">Purba Bardhaman</td>
+<td class="p-2.5 font-bold text-sky-400">1.78 mm</td>
+<td class="p-2.5">Light rain</td>
+<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">NORMAL</span></td>
 </tr>
 <tr>
-<td class="p-2.5 font-bold text-amber-400">#C-02</td>
-<td class="p-2.5">Murshidabad / Berhampore</td>
-<td class="p-2.5 text-amber-400">54.8 dBZ</td>
-<td class="p-2.5">SE @ 34 km/h</td>
-<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px]">SEVERE</span></td>
+<td class="p-2.5 font-bold text-sky-400">Midnapore</td>
+<td class="p-2.5">Paschim Medinipur</td>
+<td class="p-2.5 text-sky-400">0.63 mm</td>
+<td class="p-2.5">Light rain</td>
+<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">NORMAL</span></td>
 </tr>
 <tr>
-<td class="p-2.5 font-bold text-sky-400">#C-07</td>
-<td class="p-2.5">Purba Bardhaman / Kalna</td>
-<td class="p-2.5 text-sky-400">49.1 dBZ</td>
-<td class="p-2.5">E @ 28 km/h</td>
-<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">WATCH</span></td>
+<td class="p-2.5 font-bold text-sky-400">Berhampore</td>
+<td class="p-2.5">Murshidabad</td>
+<td class="p-2.5 text-sky-400">0.48 mm</td>
+<td class="p-2.5">Light rain</td>
+<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">NORMAL</span></td>
 </tr>
 </tbody>
 </table>
@@ -949,7 +949,7 @@
 <div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden">
 <div class="w-[22.8%] h-full bg-sky-500 rounded-full"></div>
 </div>
-<p class="text-[11px] text-slate-400">Rapid vertical cell ascent exceeding 28 m/s validated by Kolkata S-Band and Siliguri radar elevation sweeps.</p>
+<p class="text-[11px] text-slate-400">Vertical cell ascent is continuously tracked by Kolkata S-Band and Siliguri radar elevation sweeps; no significant updraft signatures are present in the current cycle.</p>
 </div>
 <!-- Item 4 -->
 <div class="space-y-1.5">
