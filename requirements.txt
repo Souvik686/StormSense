@@ -15,10 +15,9 @@ fastapi>=0.100
 uvicorn>=0.23
 pydantic>=2.0
 python-dotenv>=1.0
-
-
 cfgrib
 eccodes
 httpx
 matplotlib
 Pillow
+pytest
