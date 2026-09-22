@@ -77,3 +77,9 @@ processed/cache/gfs/
 Data/outputs/checkpoints/best.pt
 Data/outputs/checkpoints/v2_best.pt
 Data/outputs/checkpoints/v2_last.pt
+
+# --- Backups ---
+backups/
+
+# --- Experimental checkpoints ---
+Data/outputs/checkpoints_v*/
