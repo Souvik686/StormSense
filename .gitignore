@@ -69,3 +69,11 @@ Data/BOUNDARIES/wb_mask_full_*.npy
 *.grib2
 *.idx
 *.nc
+
+# --- Temporary cache (Live Mode) ---
+processed/cache/gfs/
+
+# --- Obsolete/redundant checkpoints ---
+Data/outputs/checkpoints/best.pt
+Data/outputs/checkpoints/v2_best.pt
+Data/outputs/checkpoints/v2_last.pt
