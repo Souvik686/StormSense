@@ -125,10 +125,36 @@ def main():
                     help="Earliest simulated NOW date (YYYY-MM-DD).")
     ap.add_argument("--end", default="2024-10-30",
                     help="Latest simulated NOW date (YYYY-MM-DD).")
-    ap.add_argument("--step-hours", type=int, default=72,
-                    help="Spacing between simulated NOW instants.")
+    # 91h, not 72h: a stride that is a MULTIPLE OF 24 pins every simulated NOW
+    # to the same hour of day, so each lead always verifies at the same local
+    # time. Convection over West Bengal has a strong diurnal cycle, so that
+    # makes later leads sample stormier hours and produces the physically
+    # impossible result that skill RISES with lead time (measured with a 96h
+    # stride: 1.84x at +8h climbing to 3.38x at +16h, with observed prevalence
+    # climbing 0.046 -> 0.104 in lockstep). A stride coprime with 24 rotates
+    # NOW through the diurnal cycle and removes the alias.
+    ap.add_argument("--step-hours", type=int, default=91,
+                    help="Spacing between simulated NOW instants. Should be "
+                         "coprime with 24, or every case lands at the same "
+                         "hour of day and the diurnal cycle aliases into the "
+                         "per-lead scores.")
     ap.add_argument("--out", default="reports/gfs_production_backtest.json")
+    # Opt-in raw dump. The aggregate JSON stores scored metrics at ONE threshold,
+    # which cannot support a dense threshold sweep, a reliability diagram, or a
+    # recalibration audit. This writes the concatenated held-out (y_true, y_prob)
+    # per horizon so those analyses run on the SAME arrays the metrics above were
+    # computed from -- no re-inference, no re-sampling, no separate protocol.
+    ap.add_argument("--dump-raw", default=None,
+                    help="Optional .npz path: per-horizon y_true/y_prob arrays.")
     args = ap.parse_args()
+
+    if args.step_hours % 24 == 0:
+        print(f"\nWARNING: --step-hours {args.step_hours} is a multiple of 24. "
+              "Every simulated NOW will fall at the same hour of day, so each "
+              "forecast lead verifies at a FIXED local time. With a diurnal "
+              "convection cycle this aliases into the per-horizon metrics and "
+              "can make skill appear to increase with lead time. Use a stride "
+              "coprime with 24 (e.g. 91) for a comparable measurement.\n")
 
     truth_index, severe, truth_times = load_truth()
     truth_set = set(truth_index)
@@ -149,7 +175,12 @@ def main():
     while T <= end and len(candidates) < args.max_cases:
         # Anchor to a 6-hourly boundary + a deliberately non-zero offset so the
         # backtest also exercises the "NOW is not a cycle hour" path.
-        if all((T + timedelta(hours=L)) in truth_set for L in (2, 4, 6)):
+        # Verify against the horizons THIS model actually produces, not a fixed
+        # (2, 4, 6). A long-lead checkpoint emits 8-16h, whose targets sit
+        # further ahead in the verification cache; requiring 2/4/6 would have
+        # selected instants that cannot score those leads at all.
+        if all((T + timedelta(hours=L)) in truth_set
+               for L in leads if L != 0):
             candidates.append(T)
         T += timedelta(hours=args.step_hours)
 
@@ -177,7 +208,11 @@ def main():
     print(f"[plan] {len(candidates)} simulated NOW instants to attempt "
           f"({candidates[-1].isoformat()} .. {candidates[0].isoformat()})")
 
-    acc = {L: {"y_true": [], "y_prob": []} for L in (2, 4, 6)}
+    # Score the horizons THIS checkpoint emits. Hardcoding (2, 4, 6) meant a
+    # long-lead model (8-16h) raised "ValueError: 2 is not in list" on the
+    # first case, because leads.index(2) does not exist for it.
+    scored_leads = [L for L in leads if L != 0]
+    acc = {L: {"y_true": [], "y_prob": []} for L in scored_leads}
     cases = []
 
     for T in candidates:
@@ -210,7 +245,7 @@ def main():
         case = {"simulated_now": T.isoformat(), "status": "ok",
                 "analysis_time": analysis_t, "horizons": {}}
 
-        for L in (2, 4, 6):
+        for L in scored_leads:
             vt = T + timedelta(hours=L)
             li = leads.index(L)
             y_prob = np.asarray(svc.live_pred["severe_weather_prob"][li]).ravel()
@@ -239,7 +274,7 @@ def main():
     print(f"Completed through production path: {n_ok}")
 
     metrics = {}
-    for L in (2, 4, 6):
+    for L in scored_leads:
         if not acc[L]["y_true"]:
             continue
         y_true = np.concatenate(acc[L]["y_true"])
@@ -291,6 +326,20 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     print(f"\nWrote {args.out}")
+
+    if args.dump_raw:
+        raw = {}
+        for L in scored_leads:
+            if not acc[L]["y_true"]:
+                continue
+            raw[f"y_true_{L}"] = np.concatenate(acc[L]["y_true"])
+            raw[f"y_prob_{L}"] = np.concatenate(acc[L]["y_prob"])
+        if raw:
+            d = os.path.dirname(args.dump_raw)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            np.savez_compressed(args.dump_raw, **raw)
+            print(f"Wrote raw arrays -> {args.dump_raw} ({len(raw) // 2} horizons)")
     return 0
 
 

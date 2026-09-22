@@ -55,12 +55,31 @@ class PressureEncoder(nn.Module):
         return pooled
 
 class SevereWeatherNetV2(nn.Module):
-    def __init__(self, n_surface_vars: int = 15, 
+    def __init__(self, n_surface_vars: int = 15,
                  n_wind_vars: int = 2, n_wind_levels: int = 3,
                  n_thermo_vars: int = 3, n_thermo_levels: int = 4,
-                 n_lead_times: int = 5):
+                 n_lead_times: int = 5,
+                 dropout: float = 0.0):
         super().__init__()
         self.n_lead_times = n_lead_times
+        # Spatial dropout on the fused representation.
+        #
+        # The network otherwise has NO regularisation beyond weight decay, and
+        # the long-lead (8-16h) training run overfits almost immediately:
+        # train_loss fell monotonically 0.0155 -> 0.0082 while val_loss bottomed
+        # at epoch 2 (0.0159) and then rose to 0.0214, with val sev_loss climbing
+        # 0.0107 -> 0.0160. Best val PR-AUC was epoch 7; everything after was
+        # memorisation.
+        #
+        # Dropout2d (not plain Dropout) because the features are spatial maps:
+        # dropping whole channels is the meaningful regulariser here, whereas
+        # dropping individual pixels leaks through neighbouring ones.
+        #
+        # DEFAULT 0.0 keeps this a no-op, so the existing production checkpoint
+        # (v2_calibrated_best.pt) loads and evaluates bit-identically. Only a
+        # retrain opts in.
+        self.dropout_p = float(dropout)
+        self.spatial_dropout = nn.Dropout2d(self.dropout_p) if self.dropout_p > 0 else nn.Identity()
         
         # Encoders
         self.surface_gru = ConvGRU(n_surface_vars, 64)
@@ -105,6 +124,11 @@ class SevereWeatherNetV2(nn.Module):
         # Fuse
         fused_in = torch.cat([surf_state, wind_state, thermo_state, dem_feat], dim=1)
         x0 = self.fusion(fused_in)
+        # Applied once on the fused representation, before the multi-scale
+        # pyramid and the shared decoder, so every lead sees a consistently
+        # regularised state. nn.Identity when dropout=0, and inactive under
+        # model.eval() regardless, so inference is unaffected.
+        x0 = self.spatial_dropout(x0)
         
         # Multi-scale
         x1 = torch.relu(self.down1(x0))

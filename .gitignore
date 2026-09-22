@@ -2,72 +2,70 @@
 # STORMSENSE .gitignore
 # ============================================================
 
-# ============================================================
-# PUBLIC MODE — UNCOMMENT THESE
-# ============================================================
-
+# --- Secrets -------------------------------------------------
 .env
 **/.env
 *.env
+*.env.*
 !.env.example
-
-Data/outputs/checkpoints/v2_calibrated_best.pt
-processed/cache/era5_memmap/
-
-Data/BOUNDARIES/wb_mask_full_300x200.npy
-Data/BOUNDARIES/west_bengal_full.geojson
-Data/BOUNDARIES/west_bengal_districts_full.geojson
-
-Data/processed/cache/norm_stats.json
-
-.env
 backend/.env
-venv/
 
-# ============================================================
-# ALWAYS IGNORED
-# ============================================================
+# --- Local diagnostics / ad-hoc scripts ---------------------------
+# A local investigation folder like this previously held a credential
+# backup that got committed by accident (see README security notes).
+# Ignored outright so that mistake cannot repeat.
+diagnostics/
 
-Data/ERA5/
-Data/DEM/
-Data/INSAT/
-Data/RADAR/
-Data/LIGHTNING/
-Data/NORMAL_SAMPLES/
-Data/IMD_RAINFALL/
-Data/HISTORICAL_WEATHER/
-Data/RAINFALL_DISTRICT/
-
-Data/BOUNDARIES/IND_ADM2.zip
-Data/BOUNDARIES/north_24_parganas.geojson
-Data/BOUNDARIES/wb_mask_300x200.npy
-Data/BOUNDARIES/west_bengal.geojson
-Data/BOUNDARIES/west_bengal_districts.geojson
-
-*.grib2
-*.idx
-*.nc
-*.h5
-*.zip
-
+# --- Python ----------------------------------------------------
 __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
 .pytest_cache/
-.venv/
+
+# --- Virtual environments --------------------------------------
 venv/
+.venv/
 env/
 
+# --- Local/generated artifacts -----------------------------------
 *.log
 *.tmp
 *.bak
 *.swp
 
-outputs/
-.archive/
-
+# --- OS / editor junk --------------------------------------------
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+
+# --- Raw source datasets (build-time only) ------------------------
+# Rebuilds processed/cache/era5_memmap/ via `python -m src.data.preprocess`.
+# Not read at runtime; the cache the app actually reads is tracked below.
+Data/ERA5/
+Data/DEM/
+
+# --- INSAT satellite archive (required at runtime, not committed) -------
+# Read directly by src/inference/insat_archive.py for the historical case
+# study's satellite panel. ~12GB of HDF5 files -- too large to commit even
+# via Git LFS. Must be present on disk at Data/INSAT/ after cloning; see
+# README for how to obtain it. The app degrades gracefully (reports
+# "unavailable", never fabricates data) if this directory is absent.
+Data/INSAT/
+
+# Raw boundary sources (build-time only, via scripts/build_wb_boundaries.py).
+# The processed `_full` boundary files the app reads ARE tracked in git.
+Data/BOUNDARIES/IND_ADM2.zip
+Data/BOUNDARIES/north_24_parganas.geojson
+Data/BOUNDARIES/west_bengal.geojson
+Data/BOUNDARIES/west_bengal_districts.geojson
+
+# Runtime-generated boundary mask cache (auto-created on first request by
+# get_or_create_wb_mask() if missing -- never needs to be committed).
+Data/BOUNDARIES/wb_mask_full_*.npy
+
+# --- Compressed/raw grid formats (not runtime-read directly) ------
+*.grib2
+*.idx
+*.nc

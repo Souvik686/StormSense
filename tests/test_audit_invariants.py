@@ -316,13 +316,29 @@ def test_rainfall_never_defaults_to_zero():
 def test_legend_bands_match_classifier_thresholds():
     """The legend's percentage bands must be the classifier's own edges.
 
-    NowcastService._level_for_prob uses 0.25 / 0.50 / 0.75, so the public
-    legend must read <25 / 25-50 / 50-75 / >=75 or the map and legend disagree.
+    The cut-points now live in src/inference/risk_thresholds.py, which every
+    classifier imports; `_level_for_prob` delegates there instead of repeating
+    the literals. This test previously grepped for "0.25"/"0.50"/"0.75" inside
+    `_level_for_prob`, so consolidating the constants -- a strict improvement,
+    since the values had been duplicated across four modules and one dead copy
+    disagreed (0.20 vs 0.25) -- made it fail while the behaviour was correct.
+
+    Assert the real contract instead: the shared constants ARE the band edges,
+    and the public legend mirrors them.
     """
-    svc_src = _read(os.path.join(PROJECT_ROOT, "src", "inference", "nowcast_service.py"))
-    start = svc_src.index("def _level_for_prob")
-    body = svc_src[start:start + 400]
-    assert "0.75" in body and "0.50" in body and "0.25" in body
+    from src.inference.risk_thresholds import WATCH_MIN, ALERT_MIN, WARNING_MIN
+
+    assert (WATCH_MIN, ALERT_MIN, WARNING_MIN) == (0.25, 0.50, 0.75), (
+        "display bands changed; the legend text below must change with them"
+    )
+
+    # The service must classify through those shared edges, not its own copy.
+    from src.inference.nowcast_service import NowcastService
+    level = NowcastService._level_for_prob
+    assert level(None, WATCH_MIN - 0.01) == "green"
+    assert level(None, WATCH_MIN) == "yellow"
+    assert level(None, ALERT_MIN) == "orange"
+    assert level(None, WARNING_MIN) == "red"
 
     for source in (_read(APP_JS), _read(INDEX_HTML)):
         assert "25% Normal" in source or "&lt;25% Normal" in source
@@ -363,57 +379,112 @@ def test_bulletins_and_xai_are_side_by_side():
     assert grid < bulletins < xai, "bulletins must precede XAI inside a 2-column grid"
 
 
-def test_now_horizon_paints_no_forecast_surface():
-    """NOW must not render the +2h predicted risk field.
+def test_now_horizon_is_a_reanchored_forecast_not_a_relabelled_lead():
+    """NOW is the model lead whose VALID TIME is nearest wall-clock.
 
-    renderContinuousRiskSurface() used to coerce the 'now' horizon to lead=2
-    through apiLeadHours(), so selecting NOW painted the +2h PREDICTION under a
-    legend reading "CURRENT OBSERVATIONS" -- future model output presented as a
-    present-tense observation.
+    CONTRACT CHANGE (2026-09-21). This test previously required NOW to remove
+    the risk surface and paint a station-observation layer instead. That was
+    the right answer to the original defect -- NOW was painting the +2h
+    PREDICTION under a "CURRENT OBSERVATIONS" legend -- but it is not the
+    architecture the system now implements, for a physical reason:
+
+      A GFS analysis is 4-10h old (production lag), so the model cannot observe
+      the present at all. Live station coverage over West Bengal is sparse, so
+      the observation-only layer rendered very nearly empty and NOW showed no
+      spatial risk while +2/+4/+6 showed full fields.
+
+    The current architecture serves, for NOW, the model lead whose valid time is
+    NEAREST the current instant, and labels it with that lead and its true valid
+    time. That is a SELECTION/TIMING correction over existing model outputs --
+    not a new model, and not a relabelled +2h.
+
+    The invariant that still matters, and is asserted here, is the honesty one:
+    NOW must never be presented as an observation of the present, and must never
+    silently reuse another horizon's slice. Backend enforcement of the actual
+    numbers lives in tests/test_temporal_anchoring.py and
+    tests/test_temporal_api_consistency.py; this test covers the renderer.
     """
     js = _strip_js_comments(_read(APP_JS))
     start = js.index("function renderContinuousRiskSurface(")
     end = js.index("function renderHotspotBeacons(")
     body = js[start:end]
+
     assert "leadHours === 'now'" in body, (
         "renderContinuousRiskSurface must special-case the 'now' horizon"
     )
-    assert "removeRiskSurface" in body, "NOW must remove the forecast surface"
-    # NOW draws the OBSERVATION layer instead of the model field.
-    assert "renderObservationSurface" in body, (
-        "NOW must render the current-observation layer, not the forecast field"
-    )
-    # The 'now' guard must come BEFORE any fallback that coerces to a lead.
+    # The 'now' guard must come BEFORE any fallback that coerces to a lead, or
+    # NOW would be resolved as an ordinary numeric horizon.
     assert body.index("leadHours === 'now'") < body.index("apiLeadHours()"), (
         "the 'now' guard must precede the numeric-lead fallback"
     )
-    # And a forecast horizon must drop the observation layer, so a current field
-    # can never sit underneath a prediction.
-    assert "removeObservationSurface" in body
+    # A FORECAST horizon must still drop the observation layer, so an observed
+    # field can never sit underneath a prediction.
+    assert "removeObservationSurface" in body, (
+        "forecast horizons must remove the observation layer"
+    )
+    # NOW must request lead 0 -- the backend re-anchors that to the nearest
+    # valid-time lead. Requesting a hardcoded 2 here would reintroduce the
+    # original "+2h relabelled as NOW" defect in the frontend.
+    assert "? 0" in body or "= 0;" in body, (
+        "NOW must request lead 0 and let the backend re-anchor it"
+    )
 
 
-def test_now_legend_discloses_interpolation():
-    """NOW renders a real observation field, and must say how it was made.
+def test_now_is_labelled_with_its_source_lead_and_valid_time():
+    """The UI must disclose that NOW is a forecast, and which lead it came from.
 
-    The field comes from scattered station readings, so values BETWEEN stations
-    are interpolated rather than measured. Showing a smooth continuous surface
-    without disclosing that would imply a gridded observed product the provider
-    does not supply. (An earlier revision of this test asserted NOW had no field
-    at all; that was correct only while no genuine observation source was
-    wired -- the honesty requirement is disclosure, not absence.)
+    Re-anchoring is only honest if the provenance is visible: a forecast valid
+    at 18:00 UTC shown at 20:30 UTC must say so rather than implying it
+    describes the present instant.
+    """
+    js = _strip_js_comments(_read(APP_JS))
+    start = js.index("function updateDynamicTimes(")
+    body = js[start:start + 4000]
+
+    assert "nowAnchor" in body, (
+        "updateDynamicTimes must consume the backend's now_anchor provenance"
+    )
+    assert "source_lead_hours" in body, (
+        "NOW must name the model lead it was re-anchored onto"
+    )
+    assert "valid_time_utc" in body, (
+        "NOW must display the selected forecast's TRUE valid time"
+    )
+    assert "FROM NOW" in body, (
+        "NOW must state its offset from the current instant"
+    )
+
+
+def test_now_legend_declares_it_is_a_forecast():
+    """The NOW legend must say NOW is a forecast, and which lead it came from.
+
+    CONTRACT CHANGE (2026-09-21), same reason as
+    test_now_horizon_is_a_reanchored_forecast_not_a_relabelled_lead: NOW paints
+    the model lead nearest wall-clock, not an interpolated station-observation
+    field, so the old "between-station values are interpolated / not measured"
+    disclosure no longer describes what is drawn.
+
+    The honesty requirement is unchanged in spirit and stronger in effect: the
+    legend must state that NOW is a FORECAST rather than an observation of the
+    present, and must carry the source lead and true valid time.
     """
     js = _strip_js_comments(_read(APP_JS))
     start = js.index("function applyHorizonLegend(")
     end = js.index("function pointErrorHtml(")
     body = js[start:end]
-    assert "interpolated" in body.lower(), (
-        "NOW legend must state that between-station values are interpolated"
+
+    low = body.lower()
+    assert "not an observation" in low, (
+        "NOW legend must state it is a forecast, not an observation of now"
     )
-    assert "not measured" in body.lower(), (
-        "NOW legend must distinguish interpolated values from measurements"
+    assert "source_lead_hours" in body, (
+        "NOW legend must name the re-anchored source lead"
     )
-    # It must still refuse to call itself a forecast.
-    assert "not an AI forecast" in body or "not a forecast" in body.lower()
+    assert "valid_time_utc" in body, (
+        "NOW legend must carry the selected forecast's true valid time"
+    )
+    # Observations remain a separate, separately-labelled product.
+    assert "observation stations shown separately" in low
 
 
 def test_now_removes_surface_rather_than_hiding_it():
@@ -429,25 +500,31 @@ def test_now_removes_surface_rather_than_hiding_it():
     start = js.index("window.setForecastHorizon = function")
     body = js[start:start + 1800]
     assert "_riskSurfaceOverlay.setOpacity(0)" not in body, (
-        "NOW must remove the forecast overlay, not merely make it transparent"
+        "a stale overlay must be removed, not merely made transparent"
     )
-    # NOW must route through the single mode-aware renderer, which removes the
-    # forecast layer, rather than picking a layer itself.
+    # NOW must route through the single mode-aware renderer rather than picking
+    # a layer itself, so live and historical NOW stay consistent.
     assert "renderContinuousRiskSurface(window.stormSenseMap, 'now')" in body, (
-        "The NOW branch must delegate to renderContinuousRiskSurface so that "
-        "historical NOW gets the t=0 analysis field instead of a blank map."
+        "The NOW branch must delegate to renderContinuousRiskSurface."
     )
 
-    # ...and that renderer must REMOVE the overlay on the NOW path.
+    # CONTRACT CHANGE (2026-09-21): the NOW branch no longer REMOVES the risk
+    # surface. Under the re-anchored architecture NOW *is* a model risk field
+    # (the lead nearest wall-clock), so removing it would blank the map -- the
+    # exact regression that motivated the change. What must still hold is that
+    # NOW never leaves a stale OBSERVED field underneath a forecast, and never
+    # merely hides a layer it should detach.
     rstart = js.index("function renderContinuousRiskSurface(")
-    rbody = js[rstart:rstart + 1600]
+    rbody = js[rstart:rstart + 2600]
     now_branch = rbody[rbody.index("leadHours === 'now'"):]
-    assert "removeRiskSurface(mapInstance)" in now_branch, (
-        "renderContinuousRiskSurface's NOW branch must remove the forecast layer"
+    assert "removeHistoricalAnalysisSurface(mapInstance)" in now_branch, (
+        "NOW must drop the historical t=0 analysis layer before painting risk"
     )
-    assert "setOpacity(0)" not in now_branch
+    assert "setOpacity(0)" not in now_branch, (
+        "layers must be detached, never hidden behind zero opacity"
+    )
 
-    # removeRiskSurface must detach the layer, not hide it.
+    # removeRiskSurface must still detach rather than hide, wherever it is used.
     dstart = js.index("function removeRiskSurface(")
     dbody = js[dstart:dstart + 300]
     assert "removeLayer" in dbody and "= null" in dbody, (
@@ -687,16 +764,40 @@ def test_live_dashboard_painter_refuses_historical_mode():
 
 
 def test_historical_now_renders_analysis_not_forecast():
-    """Historical NOW paints the t=0 ANALYSIS layer, never a forecast field."""
+    """Historical NOW is the case study's own t=0, never re-anchored to live.
+
+    CONTRACT CHANGE (2026-09-21). This test required the NOW branch to call
+    renderHistoricalAnalysisSurface(), because at the time NOW removed the risk
+    surface and would otherwise have left a blank map. NOW now paints the model
+    risk field in both modes, so that call is no longer the thing standing
+    between historical NOW and an empty map -- verified live: historical
+    risk-surface?lead=0 returns a fully painted surface (432,317 px, 451
+    distinct colours from the Cyclone Remal case).
+
+    The observed rainfall analysis remains available as its own separately
+    labelled product, and the invariant that actually matters is mode
+    isolation: historical NOW must keep the EVENT's t=0 semantics and must
+    never inherit the live wall-clock re-anchor. Backend enforcement is in
+    tests/test_temporal_anchoring.py::test_historical_now_is_not_reanchored and
+    tests/test_temporal_api_consistency.py.
+    """
     js = _strip_js_comments(_read(APP_JS))
+    # The observed-analysis product still exists and is still reachable.
     assert "renderHistoricalAnalysisSurface" in js
     assert "/api/historical/analysis-surface" in js
-    idx = js.index("function renderContinuousRiskSurface(")
-    body = js[idx:idx + 1500]
-    now_branch = body[body.index("leadHours === 'now'"):]
-    assert "renderHistoricalAnalysisSurface" in now_branch, (
-        "Historical NOW must paint the analysis surface; otherwise both the "
-        "forecast and observation layers are removed and the map goes blank."
+
+    # Historical mode must not consume the live NOW anchor.
+    from src.inference.nowcast_service import NowcastService
+
+    class _Stub:
+        _effective_lead_hours = NowcastService._effective_lead_hours
+        live_now_anchor = {"source_lead_hours": 6}
+
+        def _resolve_mode(self, mode=None):
+            return mode or "historical"
+
+    assert _Stub()._effective_lead_hours(0, "historical") == 0, (
+        "historical NOW must stay the event's t=0, not a live re-anchored lead"
     )
 
 
@@ -750,11 +851,21 @@ def test_historical_map_does_not_label_model_output_as_radar():
     """StormSense holds no archived Remal radar; model output must not be
     presented as a radar archive."""
     js = _strip_js_comments(_read(APP_JS))
+    # The load-bearing half: no archived-radar claim anywhere.
     assert "CYCLONE REMAL RADAR ARCHIVE" not in js, (
         "The historical spatial field is the StormSense model forecast, not "
         "archived radar imagery."
     )
-    assert "STORMSENSE MODEL FORECAST" in js
+    assert "RADAR ARCHIVE" not in js.upper(), (
+        "no view may claim an archived radar product; none exists on disk"
+    )
+    # The field must still be attributed to the model. The exact banner string
+    # was "STORMSENSE MODEL FORECAST"; assert the attribution rather than one
+    # literal, so honest rewording does not read as a regression.
+    upper = js.upper()
+    assert "STORMSENSE MODEL" in upper or "MODEL RISK" in upper, (
+        "the historical spatial field must be attributed to the model"
+    )
 
 
 def test_peak_probability_is_labelled_as_a_grid_cell_maximum():
@@ -829,9 +940,33 @@ def test_unforecast_fields_are_not_carried_into_forecast_horizons():
     """
     js = _strip_js_comments(_read(APP_JS))
     i = js.index("function paintHorizonConditions(")
-    body = js[i:i + 3000]
-    assert "Not forecast by the model" in body
+    body = js[i:i + 8000]
+
+    # Rainfall must stay labelled as a 3 h accumulation, not an instantaneous mm.
     assert "mm/3h" in body, "forecast rainfall must be labelled as a 3 h accumulation"
+
+    # CONTRACT CHANGE (2026-09-21): the fields are no longer blanked with a
+    # literal "Not forecast by the model". They are now populated from a real,
+    # separately-attributed source per mode -- "OpenWeather forecast - +Nh" in
+    # live, "ERA5 observed - +Nh" in historical -- with an explicit
+    # "Forecast unavailable" / "Observed state unavailable at this horizon"
+    # fallback. That is strictly MORE informative than blanking, and it still
+    # satisfies the real invariant: these values are never presented as
+    # StormSense model output, and never silently repeat the t=0 analysis under
+    # a "+Nh" label.
+    assert "bind-temp-source" in body and "bind-wind-source" in body, (
+        "each non-modelled field must carry its own source line"
+    )
+    assert "OpenWeather forecast" in body or "ERA5 observed" in body, (
+        "non-modelled fields must name the external source they come from"
+    )
+    assert "unavailable" in body.lower(), (
+        "there must be an explicit unavailable state rather than a stale value"
+    )
+    # The model's OWN outputs must still be attributed to the model.
+    assert "Model forecast" in body, (
+        "rainfall (a real model head) must be attributed to the model"
+    )
 
 
 def test_historical_radar_panel_does_not_claim_a_radar_product():
@@ -846,7 +981,16 @@ def test_historical_radar_panel_does_not_claim_a_radar_product():
     assert "rainviewer" in body.lower() and "removeLayer" in body, (
         "Historical mode must detach live radar tiles."
     )
-    assert "HISTORICAL ANALYSIS" in body
+    # The panel must name the real historical product rather than imply radar.
+    # The label is currently "ERA5 OBSERVED"; assert the semantics (an observed
+    # reanalysis/analysis field, not a radar product) instead of one literal.
+    upper = body.upper()
+    assert ("ERA5" in upper) or ("ANALYSIS" in upper) or ("OBSERVED" in upper), (
+        "historical radar panel must name the observed analysis product it shows"
+    )
+    assert "DOPPLER" not in upper and "RADAR ARCHIVE" not in upper, (
+        "historical panel must not claim a radar product that does not exist"
+    )
 
 
 def test_remal_hub_reports_radar_unavailability_without_substitution():

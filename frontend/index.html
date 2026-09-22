@@ -17,7 +17,15 @@
  * gm_authFailure (or a script load error), removes the failed SDK and retries
  * with the next key. Keys are injected server-side by serve_dashboard().
  */
-window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
+// Merged mode: serve_dashboard() replaces the placeholder token below with the
+// real ordered key list before sending this file. Split mode: run_frontend.py
+// performs the same substitution after fetching the list from the backend.
+// The `typeof` guard keeps the page from throwing a ReferenceError if the file
+// is ever opened without substitution (e.g. straight from disk) -- the maps
+// loader then reports "no key configured" instead of killing the whole script.
+window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== "undefined")
+  ? GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER
+  : [];
 (function () {
   var keys = Array.isArray(window.STORMSENSE_MAPS_KEYS) ? window.STORMSENSE_MAPS_KEYS.slice() : [];
   if (!keys.length) { console.error("[maps] no Google Maps key configured"); return; }
@@ -1266,6 +1274,7 @@ window.STORMSENSE_MAPS_KEYS = GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER;
 </div>
 </div>
 </div>
+
 <!-- Model Verification Table across All Horizons -->
 <div class="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-6 shadow-xl backdrop-blur-xl flex flex-col gap-4">
 <div class="flex items-center justify-between border-b border-slate-800 pb-3.5 flex-wrap gap-2">
@@ -1681,6 +1690,10 @@ Cancel
 
 <!-- Leaflet Map Engine Removed -->
 
+<!-- Runtime API base resolution. Must load BEFORE app.js, which reads it.
+     Supports merged mode (same origin) and split mode (separate frontend
+     and backend servers) without code changes. -->
+<script src="js/config.js"></script>
 <!-- StormSense Application Logic -->
 <script src="js/app.js"></script>
 

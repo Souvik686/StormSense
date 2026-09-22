@@ -1,0 +1,49 @@
+{
+  "prevalence_overall": 0.03026973026973027,
+  "component_share": {
+    "heavy_rain_prevalence": 0.006753177378177378,
+    "severe_convective_prevalence": 0.023682983682983685,
+    "positives_from_rain_only": 0.2176407224055739,
+    "positives_from_cape_cin_only": 0.7769389438943894,
+    "positives_from_both": 0.005459295929592959
+  },
+  "rain_within_positive_class": {
+    "rain_only": {
+      "n": 94961,
+      "mean_rain_3h_mm": 23.08698844909668,
+      "median_rain_3h_mm": 20.02239227294922,
+      "frac_below_1mm": 0.0,
+      "frac_below_5mm": 0.0,
+      "frac_at_or_above_15mm": 1.0
+    },
+    "cape_cin_only": {
+      "n": 338994,
+      "mean_rain_3h_mm": NaN,
+      "median_rain_3h_mm": NaN,
+      "frac_below_1mm": 0.7321663510268618,
+      "frac_below_5mm": 0.9369133376991923,
+      "frac_at_or_above_15mm": 0.0
+    },
+    "both": {
+      "n": 2382,
+      "mean_rain_3h_mm": 21.523120880126953,
+      "median_rain_3h_mm": 18.923521041870117,
+      "frac_below_1mm": 0.0,
+      "frac_below_5mm": 0.0,
+      "frac_at_or_above_15mm": 1.0
+    }
+  },
+  "spatial_coherence": {
+    "frames_sampled": 309,
+    "positive_cells_sampled": 9816,
+    "frac_isolated_single_cell": 0.038712306438467806,
+    "mean_positive_cells_per_active_frame": 31.766990291262136,
+    "median_positive_cells_per_active_frame": 18.0
+  },
+  "temporal_persistence_center_cell": {
+    "n_events": 306,
+    "mean_duration_hours": 2.4640522875816995,
+    "median_duration_hours": 2.0,
+    "frac_single_hour_events": 0.4542483660130719
+  }
+}
