@@ -1,0 +1,1213 @@
+{
+  "checkpoint": "Data/outputs/checkpoints/v2_best_baseline.pt",
+  "epoch": 16,
+  "split": "validation_2023",
+  "timestamp_eval": "2026-09-11 16:50:34",
+  "per_lead_threshold_results": {
+    "mean_metrics": {
+      "mean_csi": 0.2589,
+      "mean_pod": 0.4955,
+      "mean_far": 0.6508,
+      "mean_f1": 0.4093,
+      "mean_pr_auc": 0.3901,
+      "mean_roc_auc": 0.9236,
+      "mean_brier_score": 0.064437,
+      "mean_ece": 0.140024,
+      "mean_rain_mae": 0.591,
+      "total_loss": 0.0115,
+      "severe_loss": 0.0087,
+      "rain_loss": 0.0551
+    },
+    "per_lead": {
+      "lead_2h": {
+        "threshold_used": 0.5954545454545455,
+        "csi": 0.3347,
+        "pod": 0.574,
+        "far": 0.5548,
+        "f1": 0.5015,
+        "precision": 0.4452,
+        "pr_auc": 0.5267,
+        "roc_auc": 0.9543,
+        "brier_score": 0.056284,
+        "brier_skill_score": -0.5792,
+        "ece": 0.126115,
+        "rain_mae": 0.383,
+        "rain_rmse": 1.036,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 2016818,
+            "accuracy": 0.0004,
+            "confidence": 0.0309
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 486655,
+            "accuracy": 0.0037,
+            "confidence": 0.1445
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 302351,
+            "accuracy": 0.0117,
+            "confidence": 0.2473
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 233840,
+            "accuracy": 0.0313,
+            "confidence": 0.3485
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 197572,
+            "accuracy": 0.0779,
+            "confidence": 0.4488
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 164768,
+            "accuracy": 0.1759,
+            "confidence": 0.5479
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 108372,
+            "accuracy": 0.3403,
+            "confidence": 0.6443
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 40165,
+            "accuracy": 0.5903,
+            "confidence": 0.7402
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 12185,
+            "accuracy": 0.8733,
+            "confidence": 0.8364
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 2924,
+            "accuracy": 0.9949,
+            "confidence": 0.9383
+          }
+        ]
+      },
+      "lead_3h": {
+        "threshold_used": 0.5772727272727273,
+        "csi": 0.2798,
+        "pod": 0.5284,
+        "far": 0.6271,
+        "f1": 0.4372,
+        "precision": 0.3729,
+        "pr_auc": 0.4335,
+        "roc_auc": 0.9368,
+        "brier_score": 0.061639,
+        "brier_skill_score": -0.7295,
+        "ece": 0.134417,
+        "rain_mae": 0.536,
+        "rain_rmse": 1.438,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1918779,
+            "accuracy": 0.0006,
+            "confidence": 0.032
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 499366,
+            "accuracy": 0.0056,
+            "confidence": 0.1446
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 320362,
+            "accuracy": 0.0157,
+            "confidence": 0.2476
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 259068,
+            "accuracy": 0.0372,
+            "confidence": 0.3487
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 227505,
+            "accuracy": 0.0829,
+            "confidence": 0.449
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 192396,
+            "accuracy": 0.1743,
+            "confidence": 0.5478
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 107902,
+            "accuracy": 0.3245,
+            "confidence": 0.6415
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 31273,
+            "accuracy": 0.5782,
+            "confidence": 0.7414
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 8125,
+            "accuracy": 0.8491,
+            "confidence": 0.8342
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 874,
+            "accuracy": 0.9886,
+            "confidence": 0.9248
+          }
+        ]
+      },
+      "lead_4h": {
+        "threshold_used": 0.5681818181818182,
+        "csi": 0.2484,
+        "pod": 0.493,
+        "far": 0.6664,
+        "f1": 0.398,
+        "precision": 0.3336,
+        "pr_auc": 0.3725,
+        "roc_auc": 0.9222,
+        "brier_score": 0.065292,
+        "brier_skill_score": -0.8321,
+        "ece": 0.140243,
+        "rain_mae": 0.621,
+        "rain_rmse": 1.657,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1851022,
+            "accuracy": 0.001,
+            "confidence": 0.0326
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 505496,
+            "accuracy": 0.0072,
+            "confidence": 0.1448
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 334112,
+            "accuracy": 0.0185,
+            "confidence": 0.248
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 281406,
+            "accuracy": 0.0405,
+            "confidence": 0.3491
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 251294,
+            "accuracy": 0.0846,
+            "confidence": 0.449
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 204134,
+            "accuracy": 0.1709,
+            "confidence": 0.5472
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 102308,
+            "accuracy": 0.3065,
+            "confidence": 0.6405
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 28849,
+            "accuracy": 0.5481,
+            "confidence": 0.7408
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 6656,
+            "accuracy": 0.7867,
+            "confidence": 0.8319
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 373,
+            "accuracy": 0.9598,
+            "confidence": 0.9186
+          }
+        ]
+      },
+      "lead_5h": {
+        "threshold_used": 0.5590909090909091,
+        "csi": 0.2247,
+        "pod": 0.4611,
+        "far": 0.6953,
+        "f1": 0.3669,
+        "precision": 0.3047,
+        "pr_auc": 0.3265,
+        "roc_auc": 0.9089,
+        "brier_score": 0.068081,
+        "brier_skill_score": -0.9104,
+        "ece": 0.145619,
+        "rain_mae": 0.684,
+        "rain_rmse": 1.817,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1775007,
+            "accuracy": 0.0013,
+            "confidence": 0.0335
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 522865,
+            "accuracy": 0.0085,
+            "confidence": 0.1451
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 353470,
+            "accuracy": 0.0202,
+            "confidence": 0.2481
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 304284,
+            "accuracy": 0.0423,
+            "confidence": 0.3492
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 273018,
+            "accuracy": 0.087,
+            "confidence": 0.4489
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 212224,
+            "accuracy": 0.1703,
+            "confidence": 0.5462
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 94108,
+            "accuracy": 0.299,
+            "confidence": 0.6403
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 25820,
+            "accuracy": 0.5259,
+            "confidence": 0.74
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 4726,
+            "accuracy": 0.7347,
+            "confidence": 0.8307
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 128,
+            "accuracy": 0.9219,
+            "confidence": 0.9133
+          }
+        ]
+      },
+      "lead_6h": {
+        "threshold_used": 0.55,
+        "csi": 0.2071,
+        "pod": 0.4212,
+        "far": 0.7105,
+        "f1": 0.3431,
+        "precision": 0.2895,
+        "pr_auc": 0.2912,
+        "roc_auc": 0.896,
+        "brier_score": 0.070888,
+        "brier_skill_score": -0.9894,
+        "ece": 0.153727,
+        "rain_mae": 0.729,
+        "rain_rmse": 1.94,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1636795,
+            "accuracy": 0.0015,
+            "confidence": 0.0355
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 569391,
+            "accuracy": 0.0087,
+            "confidence": 0.1455
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 394269,
+            "accuracy": 0.0206,
+            "confidence": 0.2482
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 344379,
+            "accuracy": 0.0442,
+            "confidence": 0.3491
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 305593,
+            "accuracy": 0.0895,
+            "confidence": 0.4485
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 211765,
+            "accuracy": 0.1718,
+            "confidence": 0.5446
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 80526,
+            "accuracy": 0.3098,
+            "confidence": 0.6395
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 20236,
+            "accuracy": 0.5226,
+            "confidence": 0.7378
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 2668,
+            "accuracy": 0.6983,
+            "confidence": 0.8279
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 28,
+            "accuracy": 0.75,
+            "confidence": 0.9113
+          }
+        ]
+      }
+    }
+  },
+  "global_threshold_results": {
+    "global_threshold": 0.5681818181818182,
+    "mean_metrics": {
+      "mean_csi": 0.2569,
+      "mean_pod": 0.499,
+      "mean_far": 0.655,
+      "mean_f1": 0.4069,
+      "mean_pr_auc": 0.3901,
+      "mean_roc_auc": 0.9236,
+      "mean_brier_score": 0.064437,
+      "mean_ece": 0.140024,
+      "mean_rain_mae": 0.591,
+      "total_loss": 0.0115,
+      "severe_loss": 0.0087,
+      "rain_loss": 0.0551
+    },
+    "per_lead": {
+      "lead_2h": {
+        "threshold_used": 0.5681818181818182,
+        "csi": 0.3286,
+        "pod": 0.6437,
+        "far": 0.5983,
+        "f1": 0.4947,
+        "precision": 0.4017,
+        "pr_auc": 0.5267,
+        "roc_auc": 0.9543,
+        "brier_score": 0.056284,
+        "brier_skill_score": -0.5792,
+        "ece": 0.126115,
+        "rain_mae": 0.383,
+        "rain_rmse": 1.036,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 2016818,
+            "accuracy": 0.0004,
+            "confidence": 0.0309
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 486655,
+            "accuracy": 0.0037,
+            "confidence": 0.1445
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 302351,
+            "accuracy": 0.0117,
+            "confidence": 0.2473
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 233840,
+            "accuracy": 0.0313,
+            "confidence": 0.3485
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 197572,
+            "accuracy": 0.0779,
+            "confidence": 0.4488
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 164768,
+            "accuracy": 0.1759,
+            "confidence": 0.5479
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 108372,
+            "accuracy": 0.3403,
+            "confidence": 0.6443
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 40165,
+            "accuracy": 0.5903,
+            "confidence": 0.7402
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 12185,
+            "accuracy": 0.8733,
+            "confidence": 0.8364
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 2924,
+            "accuracy": 0.9949,
+            "confidence": 0.9383
+          }
+        ]
+      },
+      "lead_3h": {
+        "threshold_used": 0.5681818181818182,
+        "csi": 0.2788,
+        "pod": 0.5542,
+        "far": 0.6405,
+        "f1": 0.4361,
+        "precision": 0.3595,
+        "pr_auc": 0.4335,
+        "roc_auc": 0.9368,
+        "brier_score": 0.061639,
+        "brier_skill_score": -0.7295,
+        "ece": 0.134417,
+        "rain_mae": 0.536,
+        "rain_rmse": 1.438,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1918779,
+            "accuracy": 0.0006,
+            "confidence": 0.032
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 499366,
+            "accuracy": 0.0056,
+            "confidence": 0.1446
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 320362,
+            "accuracy": 0.0157,
+            "confidence": 0.2476
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 259068,
+            "accuracy": 0.0372,
+            "confidence": 0.3487
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 227505,
+            "accuracy": 0.0829,
+            "confidence": 0.449
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 192396,
+            "accuracy": 0.1743,
+            "confidence": 0.5478
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 107902,
+            "accuracy": 0.3245,
+            "confidence": 0.6415
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 31273,
+            "accuracy": 0.5782,
+            "confidence": 0.7414
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 8125,
+            "accuracy": 0.8491,
+            "confidence": 0.8342
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 874,
+            "accuracy": 0.9886,
+            "confidence": 0.9248
+          }
+        ]
+      },
+      "lead_4h": {
+        "threshold_used": 0.5681818181818182,
+        "csi": 0.2484,
+        "pod": 0.493,
+        "far": 0.6664,
+        "f1": 0.398,
+        "precision": 0.3336,
+        "pr_auc": 0.3725,
+        "roc_auc": 0.9222,
+        "brier_score": 0.065292,
+        "brier_skill_score": -0.8321,
+        "ece": 0.140243,
+        "rain_mae": 0.621,
+        "rain_rmse": 1.657,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1851022,
+            "accuracy": 0.001,
+            "confidence": 0.0326
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 505496,
+            "accuracy": 0.0072,
+            "confidence": 0.1448
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 334112,
+            "accuracy": 0.0185,
+            "confidence": 0.248
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 281406,
+            "accuracy": 0.0405,
+            "confidence": 0.3491
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 251294,
+            "accuracy": 0.0846,
+            "confidence": 0.449
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 204134,
+            "accuracy": 0.1709,
+            "confidence": 0.5472
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 102308,
+            "accuracy": 0.3065,
+            "confidence": 0.6405
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 28849,
+            "accuracy": 0.5481,
+            "confidence": 0.7408
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 6656,
+            "accuracy": 0.7867,
+            "confidence": 0.8319
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 373,
+            "accuracy": 0.9598,
+            "confidence": 0.9186
+          }
+        ]
+      },
+      "lead_5h": {
+        "threshold_used": 0.5681818181818182,
+        "csi": 0.2242,
+        "pod": 0.4349,
+        "far": 0.6836,
+        "f1": 0.3663,
+        "precision": 0.3164,
+        "pr_auc": 0.3265,
+        "roc_auc": 0.9089,
+        "brier_score": 0.068081,
+        "brier_skill_score": -0.9104,
+        "ece": 0.145619,
+        "rain_mae": 0.684,
+        "rain_rmse": 1.817,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1775007,
+            "accuracy": 0.0013,
+            "confidence": 0.0335
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 522865,
+            "accuracy": 0.0085,
+            "confidence": 0.1451
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 353470,
+            "accuracy": 0.0202,
+            "confidence": 0.2481
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 304284,
+            "accuracy": 0.0423,
+            "confidence": 0.3492
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 273018,
+            "accuracy": 0.087,
+            "confidence": 0.4489
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 212224,
+            "accuracy": 0.1703,
+            "confidence": 0.5462
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 94108,
+            "accuracy": 0.299,
+            "confidence": 0.6403
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 25820,
+            "accuracy": 0.5259,
+            "confidence": 0.74
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 4726,
+            "accuracy": 0.7347,
+            "confidence": 0.8307
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 128,
+            "accuracy": 0.9219,
+            "confidence": 0.9133
+          }
+        ]
+      },
+      "lead_6h": {
+        "threshold_used": 0.5681818181818182,
+        "csi": 0.2043,
+        "pod": 0.3694,
+        "far": 0.6862,
+        "f1": 0.3393,
+        "precision": 0.3138,
+        "pr_auc": 0.2912,
+        "roc_auc": 0.896,
+        "brier_score": 0.070888,
+        "brier_skill_score": -0.9894,
+        "ece": 0.153727,
+        "rain_mae": 0.729,
+        "rain_rmse": 1.94,
+        "calibration_bins": [
+          {
+            "bin": 0,
+            "range": [
+              0.0,
+              0.1
+            ],
+            "count": 1636795,
+            "accuracy": 0.0015,
+            "confidence": 0.0355
+          },
+          {
+            "bin": 1,
+            "range": [
+              0.1,
+              0.2
+            ],
+            "count": 569391,
+            "accuracy": 0.0087,
+            "confidence": 0.1455
+          },
+          {
+            "bin": 2,
+            "range": [
+              0.2,
+              0.3
+            ],
+            "count": 394269,
+            "accuracy": 0.0206,
+            "confidence": 0.2482
+          },
+          {
+            "bin": 3,
+            "range": [
+              0.3,
+              0.4
+            ],
+            "count": 344379,
+            "accuracy": 0.0442,
+            "confidence": 0.3491
+          },
+          {
+            "bin": 4,
+            "range": [
+              0.4,
+              0.5
+            ],
+            "count": 305593,
+            "accuracy": 0.0895,
+            "confidence": 0.4485
+          },
+          {
+            "bin": 5,
+            "range": [
+              0.5,
+              0.6
+            ],
+            "count": 211765,
+            "accuracy": 0.1718,
+            "confidence": 0.5446
+          },
+          {
+            "bin": 6,
+            "range": [
+              0.6,
+              0.7
+            ],
+            "count": 80526,
+            "accuracy": 0.3098,
+            "confidence": 0.6395
+          },
+          {
+            "bin": 7,
+            "range": [
+              0.7,
+              0.8
+            ],
+            "count": 20236,
+            "accuracy": 0.5226,
+            "confidence": 0.7378
+          },
+          {
+            "bin": 8,
+            "range": [
+              0.8,
+              0.9
+            ],
+            "count": 2668,
+            "accuracy": 0.6983,
+            "confidence": 0.8279
+          },
+          {
+            "bin": 9,
+            "range": [
+              0.9,
+              1.0
+            ],
+            "count": 28,
+            "accuracy": 0.75,
+            "confidence": 0.9113
+          }
+        ]
+      }
+    }
+  }
+}

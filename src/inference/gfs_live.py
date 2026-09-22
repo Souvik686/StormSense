@@ -48,12 +48,19 @@ UNIT / VARIABLE HARMONIZATION (must exactly match src/features/normalize.py):
     d2m      : GFS DPT @ 2 m above ground                    -> K     (direct)
     sp       : GFS PRES @ surface                            -> Pa    (direct)
     cape     : GFS CAPE @ surface                             -> J/kg  (direct)
-    cin      : GFS CIN @ surface, clipped to >=0 to match how
-               nowcast_service.py denormalizes ERA5 cin (np.maximum(0, ...)) -> J/kg
+    cin      : GFS CIN @ surface, absolute value -> J/kg. GFS stores CIN
+               NEGATIVE (measured: 91.7% of cells) while ERA5 stores it as a
+               positive magnitude (0% negative). Taking |.| restores the trained
+               convention; the previous np.maximum(0,...) zeroed 91.7% of it.
     tcwv     : GFS PWAT (precipitable water, entire atmosphere) -> kg/m^2 (direct;
                physically the same quantity ERA5 calls tcwv)
-    tp       : GFS PRATE @ surface (kg/m^2/s) x 3600          -> mm/hour
-               (matches era5_loader.py's ERA5 tp-in-mm/hour convention)
+    tp       : APCP accumulated over the 6h window ENDING at the analysis time,
+               divided by 6 -> mm/hour (matches era5_loader.py's ERA5
+               tp-in-mm/hour convention). A GFS f000 analysis contains NO
+               precipitation message at all, so the former PRATE@f000 lookup
+               was structurally ~0 mm/h. The replacement window has already
+               elapsed, so it carries no future information -- see
+               fetch_elapsed_precip_mm_per_hour.
   PRESSURE_VARS = ["u","v","z","q","t"] at hPa levels [1000,850,700,500,300,250]
     u, v : GFS UGRD/VGRD @ 1000/850/700 mb only (z/q/t levels are NaN, mirroring
            ERA5's native per-group level coverage; the model only ever reads the
@@ -75,7 +82,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import numpy as np
@@ -191,6 +198,113 @@ def _byte_range_for(parsed_idx: List[List[str]], gfs_name: str, gfs_level: str) 
             end = int(parsed_idx[i + 1][1]) - 1 if i + 1 < len(parsed_idx) else start + 20_000_000
             return start, end
     raise GfsFetchError(f"GFS message not found in .idx: {gfs_name}:{gfs_level}")
+
+
+def _byte_range_for_accum(parsed_idx: List[List[str]], gfs_name: str, window_tag: str) -> Tuple[int, int]:
+    """Byte range for an ACCUMULATED surface message (e.g. APCP).
+
+    `_byte_range_for` keys on name+level, but a GFS .idx carries several APCP
+    messages at `surface` that differ only in their accumulation window
+    ("0-6 hour acc fcst" vs "5-6 hour acc fcst"). Matching on the window string
+    is what makes the selection unambiguous.
+    """
+    for i, parts in enumerate(parsed_idx):
+        if len(parts) >= 6 and parts[3] == gfs_name and parts[4] == "surface" and window_tag in parts[5]:
+            start = int(parts[1])
+            end = int(parsed_idx[i + 1][1]) - 1 if i + 1 < len(parsed_idx) else start + 20_000_000
+            return start, end
+    raise GfsFetchError(f"GFS accumulated message not found in .idx: {gfs_name}:surface:{window_tag}")
+
+
+def fetch_elapsed_precip_mm_per_hour(
+    analysis_t0: datetime, lats: np.ndarray, lons: np.ndarray, window_hours: int = 6,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Mean precipitation rate (mm/hour) over the `window_hours` ending at
+    `analysis_t0`, taken from the PRIOR cycle's accumulated APCP.
+
+    WHY THIS EXISTS. GFS f000 is an analysis, and a GFS analysis contains no
+    precipitation at all: the .idx for f000 lists CAPE/CIN at `anl` but has no
+    PRATE and no APCP message. The harmonizer's `PRATE:surface` lookup therefore
+    resolved to a field that is structurally zero -- measured over 54 paired
+    cycles, GFS tp mean was 0.0000 mm/h against ERA5's 0.2590 mm/h, so the model
+    was effectively told "it is not raining anywhere, ever".
+
+    WHY THIS IS NOT LEAKAGE. The accumulation window is
+    [analysis_t0 - window_hours, analysis_t0] -- entirely in the PAST relative to
+    both the analysis instant and the forecast issue time. It is drawn from the
+    cycle at `analysis_t0 - window_hours`, which by GFS production lag (~3.6h
+    measured) was published hours before we run. This is the standard operational
+    way to obtain accumulated precipitation, and it describes rain that has
+    ALREADY FALLEN.
+
+    This is a different thing from the practice this module forbids elsewhere,
+    and the distinction is load-bearing: we do NOT use f001..f005 of the CURRENT
+    cycle to invent hourly atmospheric states between analyses. Those would be
+    forecasts standing in for unobserved history. Here the window has elapsed.
+
+    VALIDATED against ERA5 at identical valid times (Cyclone Remal, 2024-05-26/27):
+      26 May 12Z: GFS 1.036 mm/h vs ERA5 1.111 mm/h, corr +0.703
+      27 May 00Z: GFS 1.884 mm/h vs ERA5 1.929 mm/h, corr +0.827
+    versus the f000 PRATE path's mean of exactly 0.000 mm/h.
+
+    Returns (array_mm_per_hour, provenance_dict).
+    """
+    src_cycle = analysis_t0 - timedelta(hours=window_hours)
+    window_tag = f"0-{window_hours} hour acc"
+    last_err: Optional[Exception] = None
+    for base in (AWS_BASE, NOMADS_BASE):
+        try:
+            with _http_client() as client:
+                idx_resp = client.get(_idx_url(src_cycle, window_hours, base))
+                if idx_resp.status_code != 200:
+                    raise GfsFetchError(
+                        f"APCP idx unavailable for {src_cycle.isoformat()} f{window_hours:03d} "
+                        f"at {base} (HTTP {idx_resp.status_code})"
+                    )
+                parsed = _parse_idx(idx_resp.text)
+                start, end = _byte_range_for_accum(parsed, "APCP", window_tag)
+                grib_url = _grib_url(src_cycle, window_hours, base)
+                r = client.get(grib_url, headers={"Range": f"bytes={start}-{end}"})
+                if r.status_code not in (200, 206):
+                    raise GfsFetchError(f"APCP byte-range fetch failed (HTTP {r.status_code})")
+                with tempfile.NamedTemporaryFile(suffix=".grib2", delete=False) as tf:
+                    tf.write(r.content)
+                    tmp_path = tf.name
+                try:
+                    ds = xr.open_dataset(tmp_path, engine="cfgrib", backend_kwargs={"indexpath": ""})
+                    da = ds[list(ds.data_vars)[0]]
+                    lat_lo, lat_hi = float(lats.min()) - _DOMAIN_MARGIN_DEG, float(lats.max()) + _DOMAIN_MARGIN_DEG
+                    lon_lo, lon_hi = float(lons.min()) - _DOMAIN_MARGIN_DEG, float(lons.max()) + _DOMAIN_MARGIN_DEG
+                    cropped = da.sel(latitude=slice(lat_hi, lat_lo), longitude=slice(lon_lo, lon_hi)).load()
+                    ds.close()
+                    arr = _subset_to_domain(cropped, lats, lons)
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                # APCP is a total over the window, in kg/m^2 == mm. ERA5 `tp` in
+                # this codebase is mm/HOUR (see era5_loader.py), so divide.
+                mm_per_hour = np.clip(arr.astype(np.float32) / float(window_hours), 0.0, None)
+                prov = {
+                    "source_cycle": src_cycle.isoformat(),
+                    "forecast_hour": window_hours,
+                    "message": f"APCP:surface:{window_tag} fcst",
+                    "accumulation_window_utc": [
+                        src_cycle.isoformat(), analysis_t0.isoformat(),
+                    ],
+                    "units": "mm/hour (window total / window_hours)",
+                    "leakage_check": (
+                        "Window ends at the analysis time and is entirely in the past; "
+                        "source cycle published ~3.6h after its nominal hour, long before issue."
+                    ),
+                }
+                return mm_per_hour, prov
+        except Exception as e:  # try the next mirror
+            last_err = e
+    raise GfsFetchError(
+        f"Could not obtain elapsed APCP for {analysis_t0.isoformat()}: {last_err}"
+    )
 
 
 # Small margin (deg) around the WB domain kept before interpolation, so cfgrib
@@ -330,10 +444,29 @@ def _build_surface_tensor(cycles_surface: List[Dict[str, np.ndarray]], H: int, W
     for ci, sdict in enumerate(cycles_surface):
         for vi, var in enumerate(SINGLE_VARS):
             out[ci, vi] = sdict[var]
-    # cin must be non-negative, matching how ERA5 cin is treated when denormalized
-    # elsewhere in this codebase (nowcast_service.py: np.maximum(0.0, ...)).
+    # CIN SIGN CONVENTION (measured, not assumed -- see
+    # reports/gfs_domain_shift_paired.json, 54 GFS/ERA5 pairs at identical valid
+    # times, 44,550 cells).
+    #
+    #   ERA5 cin: 0.0% negative, 28.3% exactly zero  -> POSITIVE inhibition magnitude
+    #   GFS  cin: 91.7% negative,  0.0% exactly zero -> NEGATIVE inhibition
+    #
+    # The two systems store the same physical quantity with opposite signs. The
+    # previous `np.maximum(0.0, ...)` therefore mapped 91.7% of GFS CIN to exactly
+    # zero, telling a model trained on positive-magnitude CIN that convective
+    # inhibition was absent almost everywhere -- i.e. "nothing is capping
+    # convection". That is a false-alarm generator, and it measurably inverted the
+    # variable: corr(GFS, ERA5) was -0.133 under the clip.
+    #
+    # Taking the magnitude restores the trained convention and flips the
+    # correlation to its proper sign: -0.204 raw -> +0.204 with abs().
+    #
+    # DISCLOSED LIMITATION: even corrected, CIN remains the most shifted input.
+    # Correlation is only +0.20 and the magnitudes differ ~3x (ERA5 mean 223 J/kg
+    # vs |GFS| mean 66 J/kg), so this fixes the sign convention, NOT the
+    # underlying ERA5-vs-GFS representation difference.
     cin_i = SINGLE_VARS.index("cin")
-    out[:, cin_i] = np.maximum(0.0, out[:, cin_i])
+    out[:, cin_i] = np.abs(out[:, cin_i])
     # tp (PRATE, kg/m^2/s) -> mm/hour
     tp_i = SINGLE_VARS.index("tp")
     out[:, tp_i] = np.clip(out[:, tp_i] * 3600.0, 0.0, None)
@@ -351,6 +484,11 @@ class HarmonizedLiveInput:
     slot_provenance: List[Dict]  # per-slot {"timestamp":..., "source": "analysis"|"interpolated", "bracket": [...]}
     fetched_at: datetime         # wall-clock time this harmonization completed
     wallclock_age_hours: float   # how far behind wall-clock the analysis_t0 state is
+    # Where `tp` actually came from: the elapsed-APCP window and its source
+    # cycle, or an "unavailable" record if that fetch failed and tp fell back to
+    # the structurally-zero f000 PRATE. Defaulted so existing constructions and
+    # any pickled cache from before this field remain valid.
+    precip_provenance: Optional[Dict[str, Any]] = None
 
 
 # Module-level cache of the last successful harmonization, keyed implicitly by
@@ -382,11 +520,25 @@ def _cycles_available_at(wallclock: datetime, production_lag_hours: float) -> Li
     return out
 
 
-# Typical NCEP GFS publication latency. Measured against the live feed: a cycle
-# is routinely not fully on the wire until ~3.5-5h after its nominal hour. Used
-# as the availability rule for BOTH live selection and the historical backtest so
-# neither can ever consume a cycle that did not yet exist.
+# NCEP GFS publication latency, used as the availability rule for BOTH live
+# selection and the historical backtest so neither can ever consume a cycle that
+# did not yet exist.
+#
+# Measured from S3 `Last-Modified` on the f000 .idx across consecutive
+# cycles: mean 3.60h, median 3.59h, min 3.54h, max 3.81h.
+#
+# Kept at 5.0h, ~1.4h more conservative than measured. `Last-Modified` on the
+# .idx marks when that file appears, not when the whole cycle is dependably
+# retrievable, and this constant gates the backtest's notion of "what could an
+# operator have had?". Tightening it toward 3.6h would let a simulated past
+# run consume a cycle that was still being disseminated, biasing backtest
+# skill upward. If this is ever lowered, re-run every backtest, because the
+# numbers are not comparable across different availability rules.
 GFS_PRODUCTION_LAG_HOURS = 5.0
+
+# What was actually measured, recorded separately so reports can cite the real
+# latency without changing the (conservative) availability rule above.
+GFS_MEASURED_PUBLISH_LAG_HOURS = 3.60
 
 
 def _interpolate_slot(
@@ -499,6 +651,7 @@ def fetch_and_harmonize(
                 slot_provenance=cached.slot_provenance,
                 fetched_at=cached.fetched_at,
                 wallclock_age_hours=(target_t0 - cached.analysis_t0).total_seconds() / 3600.0,
+                precip_provenance=getattr(cached, "precip_provenance", None),
             )
 
     # Six hourly slots ending exactly at the real analysis time.
@@ -530,6 +683,38 @@ def fetch_and_harmonize(
     surf_tensor = _build_surface_tensor(out_surface, H, W)
     pres_tensor = _build_pressure_tensor(out_pressure, H, W)
 
+    # ELAPSED-PRECIPITATION SUBSTITUTION.
+    #
+    # `_build_surface_tensor` fills tp from PRATE, which does not exist in a GFS
+    # f000 analysis and therefore comes out structurally zero (measured: 0.0000
+    # mm/h against ERA5's 0.2590 over 54 paired cycles). Replace it with real
+    # accumulated precipitation over the window ENDING at the analysis time --
+    # rain that has already fallen. See fetch_elapsed_precip_mm_per_hour for the
+    # leakage argument and the ERA5 validation.
+    #
+    # Applied to every slot: the 6 input slots span only the 5h before the
+    # analysis, which is inside the accumulation window, and a 6-hourly mean is
+    # the finest precipitation resolution GFS makes available without reaching
+    # into an unelapsed window.
+    #
+    # Failure here must NOT take down the live pipeline: precipitation is one of
+    # nine surface variables, and the previous behaviour (structural zero) is
+    # what the model has been served all along. On failure we keep that and say
+    # so in provenance, rather than raising.
+    precip_provenance: Optional[Dict[str, Any]] = None
+    try:
+        tp_i = SINGLE_VARS.index("tp")
+        elapsed_tp, precip_provenance = fetch_elapsed_precip_mm_per_hour(
+            analysis_t0, lats, lons, window_hours=6
+        )
+        surf_tensor[:, tp_i] = elapsed_tp[None, ...]
+    except Exception as e:
+        precip_provenance = {
+            "status": "unavailable",
+            "error": str(e),
+            "fallback": "tp left as GFS f000 PRATE, which is structurally ~0 mm/h",
+        }
+
     res = HarmonizedLiveInput(
         surface=surf_tensor,
         pressure=pres_tensor,
@@ -540,6 +725,7 @@ def fetch_and_harmonize(
         slot_provenance=slot_provenance,
         fetched_at=datetime.now(timezone.utc),
         wallclock_age_hours=(target_t0 - analysis_t0).total_seconds() / 3600.0,
+        precip_provenance=precip_provenance,
     )
 
     _HARMONIZED_CACHE = res

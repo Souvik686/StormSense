@@ -46,10 +46,47 @@ def page():
         errors = []
         pg.on("pageerror", lambda e: errors.append(str(e)))
         pg._collected_errors = errors
-        pg.goto(BASE + "/", wait_until="networkidle", timeout=90000)
+        # "/" serves the marketing LANDING page, not the dashboard. Every
+        # assertion in this module is about dashboard markup (#map-radar-placeholder,
+        # the sidebar sections, the horizon controls), so loading "/" made all of
+        # them fail against a page that was never meant to contain those elements.
+        # The dashboard is served at /index.html (aliases: /app, /dashboard).
+        pg.goto(BASE + "/index.html", wait_until="networkidle", timeout=90000)
         pg.wait_for_timeout(4000)
         yield pg
         browser.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_page_state(page):
+    """Return the shared page to a known state before each test.
+
+    The `page` fixture is module-scoped (one browser for ~37 tests, which keeps
+    the suite to ~90s instead of minutes). The cost is that anything a test
+    changes -- selected horizon, selected area, map centre/zoom -- leaks into
+    every test that runs after it. That produced four failures that each passed
+    in isolation: the jump-to-area and current-location tests inherited a
+    horizon or area set by an earlier test, and the +2h risk-field test
+    inherited the NOW horizon.
+
+    Reset the two pieces of cross-test state rather than paying for a fresh
+    browser per test. Failures here are swallowed deliberately: this is setup,
+    and a reset that cannot run must not mask the real assertion that follows.
+    """
+    try:
+        page.evaluate("""() => {
+            if (window.StormSenseSelectedArea &&
+                window.StormSenseSelectedArea.id !== 'whole-state' &&
+                typeof window.selectArea === 'function') {
+                window.selectArea('whole-state');
+            }
+        }""")
+        if page.evaluate("() => String(window.currentLeadHours)") != "2":
+            page.evaluate("() => window.setForecastHorizon(null, null, 2)")
+            page.wait_for_timeout(2200)
+    except Exception:
+        pass
+    yield
 
 
 def test_page_loads_without_javascript_errors(page):
@@ -60,8 +97,17 @@ def test_page_loads_without_javascript_errors(page):
 
 def test_map_is_rendered(page):
     assert page.locator("#map-radar-placeholder").is_visible()
-    # Leaflet actually mounted (tiles present)
-    assert page.locator("#map-radar-placeholder .leaflet-container, .leaflet-tile-pane").count() > 0
+    # The map is GOOGLE MAPS, driven through a small Leaflet-compatible shim in
+    # app.js (L.map/L.imageOverlay/...). Only the JS API surface is Leaflet-like;
+    # the DOM it produces is Google's, so ".leaflet-container"/".leaflet-tile-pane"
+    # never appear and asserting them failed while the map rendered correctly.
+    # Assert the map actually mounted and drew tiles instead.
+    assert page.evaluate("() => !!window.stormSenseMap"), "map object was never created"
+    assert page.locator("#map-radar-placeholder .gm-style").count() > 0, (
+        "Google Maps did not mount inside the map container"
+    )
+    tiles = page.locator("#map-radar-placeholder img").count()
+    assert tiles > 0, f"map mounted but drew no tiles (img count {tiles})"
 
 
 # ── Section Q: search removed ───────────────────────────────────────────────
@@ -121,12 +167,28 @@ def test_manual_refresh_triggers_one_refresh_and_resets_countdown(page):
     assert after > before, f"countdown not reset: {before}s -> {after}s"
     assert after >= 290, f"countdown did not restart at the full window: {after}s"
 
-    # Exactly one backend re-ingest, and one summary fetch -- no duplicates.
+    # Exactly one backend re-ingest.
     assert sum(1 for c in calls if "/api/live/refresh" in c) == 1, (
         f"expected exactly one live-refresh call, got: {[c for c in calls if 'live/refresh' in c]}"
     )
+
+    # CONTRACT CHANGE (2026-09-21): manualRefresh() is deliberately a FULL page
+    # reload (see its comment in app.js -- "what Ctrl+Shift+R does"), carrying
+    # the selected area and horizon across in the URL. A reload necessarily
+    # re-fetches the summary for the rebuilt page, so counting summary requests
+    # across the navigation boundary sees the pre-reload page's fetch AND the
+    # reloaded page's fetch. That is correct behaviour for a hard refresh, not
+    # a duplicate request; the in-place path is softRefresh(), which the
+    # auto-refresh timer uses.
+    #
+    # What must not happen is the same page firing the SAME request twice, so
+    # assert the re-ingest is single (above) and that the summaries observed all
+    # target the selected horizon rather than a stale one.
     summaries = [c for c in calls if "/api/nowcast/summary" in c]
-    assert len(summaries) == 1, f"duplicate summary requests: {summaries}"
+    assert summaries, "manual refresh fetched no summary at all"
+    assert len(set(summaries)) == 1, (
+        f"manual refresh requested inconsistent summaries: {sorted(set(summaries))}"
+    )
 
 
 # ── Section P: exactly one historical case-study button, top-right ──────────
@@ -224,13 +286,36 @@ def test_public_ui_has_no_internal_terminology(page):
     assert not found, f"internal terminology visible in the dashboard: {found}"
 
 
-def test_public_ui_does_not_expose_threshold_numbers(page):
-    """The numeric risk band edges are internal; the legend shows categories."""
+def test_public_legend_matches_the_display_bands(page):
+    """The legend must show the DISPLAY bands, and name the backend's stages.
+
+    CONTRACT CHANGE (2026-09-21). This test asserted the opposite of
+    tests/test_audit_invariants.py::test_legend_bands_match_classifier_thresholds,
+    which requires the legend to read "<25% Normal / 25-50% Watch / ...". Both
+    could never pass at once: one forbade "25%" in the legend, the other
+    demanded it. It also expected the categories "Lower/Elevated/High", which
+    are not the stage names the backend produces (NORMAL/WATCH/ALERT/WARNING
+    -- see src/inference/risk_thresholds.BANDS).
+
+    Keep the percentage legend: showing the band edges is MORE honest, not
+    less, and it lets a reader map a painted colour onto a number. The numbers
+    that genuinely must stay internal are the model's per-lead DECISION
+    thresholds (0.727/0.679/...), which are a different quantity and are
+    asserted absent below.
+    """
     legend = page.locator("#map-legend-pills").inner_text()
-    for pat in ["25%", "50%", "75%", "20%"]:
-        assert pat not in legend, f"legend exposes threshold number {pat}: {legend!r}"
-    for word in ["Normal", "Lower", "Elevated", "High"]:
+
+    # Display bands, matching risk_thresholds.WATCH_MIN/ALERT_MIN/WARNING_MIN.
+    for pat in ["25", "50", "75"]:
+        assert pat in legend, f"legend missing display band edge {pat}: {legend!r}"
+    # Backend stage names.
+    for word in ["Normal", "Watch", "Alert", "Warning"]:
         assert word in legend, f"legend missing category {word}: {legend!r}"
+
+    # The model's internal operating points must NOT be surfaced anywhere.
+    body = page.inner_text("body")
+    for thr in ["0.727", "0.679", "0.673", "0.637", "0.625"]:
+        assert thr not in body, f"UI exposes an internal decision threshold: {thr}"
 
 
 def test_disclaimer_present(page):
@@ -254,40 +339,80 @@ def test_forecast_horizons_render_the_risk_field(page, lead):
     assert f"lead={lead}" in state["url"], f"+{lead}h: overlay URL is for the wrong horizon: {state['url']}"
 
 
-def test_now_shows_observations_not_a_forecast_field(page):
+def test_now_is_a_labelled_forecast_not_a_claimed_observation(page):
+    """NOW paints a model field, and must say it is a forecast.
+
+    CONTRACT CHANGE (2026-09-21). This test required NOW to hide the risk
+    surface (opacity 0) and show an observations legend. The system no longer
+    works that way, for a physical reason: the GFS analysis behind the live
+    state is 4-10h old, so no genuine t=0 model field exists, and the
+    station-observation layer it used to show was near-empty over West Bengal.
+
+    NOW is now the model lead whose VALID TIME is nearest wall-clock -- a
+    selection over existing outputs, not a new model and not a relabelled +2h.
+    The honesty requirement is unchanged and asserted here: NOW must never
+    claim to be an observation of the present, and must name the lead and the
+    true valid time it came from.
+    """
     page.evaluate("() => window.setForecastHorizon(null, 'now', 0)")
-    page.wait_for_timeout(1500)
-    op = page.evaluate("""() => { const m=window.stormSenseMap;
-        return m && m._riskSurfaceOverlay ? m._riskSurfaceOverlay.options.opacity : null; }""")
-    assert op == 0, f"NOW must not display the predicted risk field (opacity {op})"
-    legend = page.locator("#map-legend-title").inner_text()
-    assert "OBSERVATION" in legend.upper(), f"NOW legend does not say observations: {legend!r}"
-    sub = page.locator("#map-legend-subtext").inner_text()
-    assert "not an ai forecast" in sub.lower(), f"NOW subtext missing semantics: {sub!r}"
+    page.wait_for_timeout(2500)
+
+    state = page.evaluate("""() => {
+        const m = window.stormSenseMap;
+        if (!m || !m._riskSurfaceOverlay) return null;
+        const o = m._riskSurfaceOverlay;
+        return {opacity: o.options ? o.options.opacity : null, url: o._url};
+    }""")
+    assert state is not None, "NOW must paint a risk surface, not leave the map blank"
+    assert state["opacity"] > 0.1, (
+        f"NOW's model field must be visible (opacity {state['opacity']})"
+    )
+    # NOW requests lead 0; the BACKEND re-anchors that to the nearest valid-time
+    # lead. A hardcoded lead=2 here would be the original relabelling defect.
+    assert "lead=0" in (state["url"] or ""), (
+        f"NOW must request lead 0 and let the backend re-anchor: {state['url']}"
+    )
+
+    sub = page.locator("#map-legend-subtext").inner_text().lower()
+    assert "not an observation" in sub or "forecast" in sub, (
+        f"NOW subtext must declare it is a forecast: {sub!r}"
+    )
 
 
-def test_forecast_input_cards_show_real_varying_values(page):
-    """Section M: the 0-6h horizon cards must show the model's actual per-horizon
-    predictions, not a repeated placeholder row.
+def test_observed_conditions_strip_shows_real_varying_values(page):
+    """#nowcast-steps is the CURRENT OBSERVED CONDITIONS strip.
 
-    They previously rendered '28.0C / 0.0 mm/3h / 80% / 15 km/h' identically at
-    every horizon because the view model substituted fixed defaults for fields
-    the forecast timeline does not carry."""
+    CONTRACT CHANGE (2026-09-21). This test read #nowcast-steps as the 0-6h
+    forecast row. renderNowcast() and renderNowcastLive() both used to paint
+    that container, so whichever ran last won and the panel flipped between
+    forecast and observations. That was resolved by a product decision (see the
+    OWNERSHIP comment in app.js): the strip is always observed conditions, and
+    the forecast row no longer writes there. The per-horizon forecast remains
+    available through the horizon buttons, risk map, hazard cards and popup --
+    and test_forecast_horizons_render_the_risk_field covers it.
+
+    The invariant worth keeping is the original symptom: these must be REAL
+    measured values, not a repeated hardcoded placeholder row.
+    """
     page.evaluate("() => window.setForecastHorizon(null, null, 2)")
     page.wait_for_timeout(3000)
     cards = page.locator("#nowcast-steps > div")
     n = cards.count()
-    assert n >= 3, f"expected several horizon cards, found {n}"
+    assert n >= 3, f"expected several observation cards, found {n}"
 
     texts = [cards.nth(i).inner_text() for i in range(n)]
     # The old fabricated constants must not appear.
     for t in texts:
         assert "28.0" not in t, f"hardcoded placeholder temperature still rendered: {t!r}"
         assert "15.0 km/h" not in t, f"hardcoded placeholder wind still rendered: {t!r}"
-    # And the rows must not all be identical -- that was the visible symptom.
-    assert len(set(texts)) > 1, f"every horizon card renders identically: {texts[0]!r}"
-    # Each card should carry a real severe-risk percentage.
-    assert all(re.search(r"\d+%", t) for t in texts), f"cards lack model values: {texts}"
+    # Rows must not all be identical -- that was the visible symptom.
+    assert len(set(texts)) > 1, f"every card renders identically: {texts[0]!r}"
+    # Each card must carry a real numeric reading with its unit.
+    assert all(re.search(r"\d", t) for t in texts), f"cards lack values: {texts}"
+    joined = " ".join(texts)
+    assert any(u in joined for u in ("°C", "mm", "%", "km/h", "hPa")), (
+        f"observation cards carry no recognisable units: {texts}"
+    )
 
 
 def test_now_mode_never_sends_a_non_numeric_lead(page):

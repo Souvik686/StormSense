@@ -91,6 +91,11 @@ def main():
     parser.add_argument("--config", default=None)
     parser.add_argument("--set", dest="overrides", action="append", default=[])
     parser.add_argument("--resume-from", default=None, help="checkpoint path to resume from")
+    parser.add_argument("--init-from", default=None,
+                        help="Load WEIGHTS ONLY from this checkpoint and start a "
+                             "fresh run (fine-tuning). Unlike --resume-from, the "
+                             "optimizer, scheduler and epoch counter are not "
+                             "restored, so the config's fine-tuning LR applies.")
     parser.add_argument("--smoke-test", action="store_true", help="Run 2 batches smoke test")
     parser.add_argument("--eval-test", action="store_true", help="Run test evaluation after training")
     args = parser.parse_args()
@@ -103,8 +108,14 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[train] device = {device}")
 
-    cache_path = os.path.join(cfg.path("paths", "cache_root"), "era5_memmap")
-    
+    # Which preprocessed cache to train on. Defaults to the ERA5 memmap, so every
+    # existing config behaves exactly as before. `paths.cache_subdir` lets a
+    # GFS-domain fine-tuning config point at a GFS-input cache built by
+    # scripts/build_gfs_training_cache.py, which writes the identical file layout.
+    _subdir = cfg.get("paths", "cache_subdir", default="era5_memmap") or "era5_memmap"
+    cache_path = os.path.join(cfg.path("paths", "cache_root"), _subdir)
+    print(f"[train] cache = {cache_path}")
+
     print("[train] building V2 dataloaders ...")
     loaders = make_dataloaders_v2(cache_path, cfg)
     for split, dl in loaders.items():
@@ -113,7 +124,13 @@ def main():
     lead_times = cfg.get("sequence", "lead_times_hours")
     n_lead = len(lead_times)
 
-    model = SevereWeatherNetV2(n_lead_times=n_lead).to(device)
+    # Optional spatial dropout (training.dropout in the config; 0.0 = off, which
+    # reproduces every earlier run exactly). Added because the long-lead run
+    # overfits from about epoch 3 -- see the note in src/models/v2_model.py.
+    _dropout = float(cfg.get("training", "dropout", default=0.0) or 0.0)
+    model = SevereWeatherNetV2(n_lead_times=n_lead, dropout=_dropout).to(device)
+    if _dropout > 0:
+        print(f"[train] spatial dropout = {_dropout}")
     print(f"[train] V2 model params: {model.count_parameters():,}")
 
     loss_fn = MultiTaskLossV2()
@@ -153,6 +170,34 @@ def main():
         start_epoch = ckpt["epoch"] + 1
         best_val_score = ckpt.get("best_val_score", -float("inf"))
         patience_ctr = ckpt.get("patience_ctr", 0)
+    elif args.init_from:
+        # FINE-TUNING START, deliberately different from --resume-from.
+        #
+        # Resuming restores the optimizer and scheduler as well, which continues
+        # the ORIGINAL run: the LR lands wherever the old cosine schedule had got
+        # to, the epoch counter carries over, and the early-stopping baseline is
+        # the old best score. None of that is wanted when adapting a finished
+        # model to a new input domain.
+        #
+        # This loads WEIGHTS ONLY and leaves the optimizer/scheduler fresh, so the
+        # config's (much lower) fine-tuning LR and warmup actually apply and the
+        # run is scored on its own terms from epoch 0.
+        print(f"[train] initialising WEIGHTS ONLY from {args.init_from} "
+              f"(fresh optimizer/scheduler; lr={train_cfg['lr']})")
+        ckpt = torch.load(args.init_from, map_location=device, weights_only=False)
+        missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        if missing or unexpected:
+            print(f"[train]   missing keys: {list(missing)}")
+            print(f"[train]   unexpected keys: {list(unexpected)}")
+        src_leads = (ckpt.get("config", {}) or {}).get("sequence", {}).get("lead_times_hours")
+        if src_leads and list(src_leads) != list(lead_times):
+            # The lead embedding is indexed by position, so a different lead set
+            # means the loaded embedding rows refer to different horizons.
+            raise SystemExit(
+                f"[train] refusing to init from a checkpoint with different leads: "
+                f"source {src_leads} vs config {list(lead_times)}. The lead "
+                f"embedding is positional, so the weights would be misaligned."
+            )
 
     print("[train] persistence baseline (sanity check) ...")
     persist_metrics = run_persistence_eval(loaders["val"], lead_times, n_lead)
@@ -196,7 +241,7 @@ def main():
         print(f"[epoch {epoch+1}/{epochs}] train_loss={train_loss:.4f} val_loss={val_loss:.4f} "
               f"val_pr_auc={val_pr_auc:.4f} val_csi={val_csi:.4f} "
               f"sev_loss={val_result['severe_loss']:.4f} rain_loss={val_result['rain_loss']:.4f} "
-              f"lr={lr:.2e} time={dt:.1f}s")
+              f"lr={lr:.2e} time={dt:.1f}s", flush=True)
         for lh, m in val_result["per_lead"].items():
             print(f"    {lh}: csi={m['csi']:.3f} pod={m['recall_pod']:.3f} far={m['far']:.3f} "
                   f"pr_auc={m['pr_auc']:.3f} mae={m['mae']:.3f}")

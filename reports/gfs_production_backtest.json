@@ -818,5 +818,9 @@
         }
       }
     }
-  ]
+  ],
+  "VALIDITY_WARNING": "INVALID FOR CROSS-HORIZON COMPARISON. The sampling stride was a multiple of 24h, so every simulated NOW fell at the same UTC hour and each forecast lead verified at a FIXED local time. West Bengal convection has a strong diurnal cycle, so longer leads systematically sampled stormier hours: observed prevalence rises 0.046 -> 0.104 with corr(lead, prevalence) = +0.944. Per-horizon scores reflect the schedule, not forecast skill. Retained as historical evidence only. Superseded by the 91h-stride run (coprime with 24).",
+  "invalid_for_cross_horizon_comparison": true,
+  "sampling_stride_hours": 72,
+  "superseded_by": "reports/gfs_production_backtest_corrected_v3.json"
 }

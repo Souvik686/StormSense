@@ -41,15 +41,29 @@ def move_to_device(batch: dict, device) -> dict:
 
 
 @torch.no_grad()
-def collect_predictions(model, loader, device, lead_times: list) -> dict:
-    """Accumulate all val predictions into arrays. Returns per-lead arrays."""
+def collect_predictions(model, loader, device, lead_times: list,
+                        temperature: list | None = None) -> dict:
+    """Accumulate all val predictions into arrays. Returns per-lead arrays.
+
+    Applies the checkpoint's per-lead TEMPERATURE SCALING before the sigmoid,
+    matching what src/inference/predictor.py serves. Without this the optimiser
+    tunes thresholds against RAW sigmoid output while production compares them
+    to CALIBRATED probabilities -- two different distributions, so the operating
+    point chosen here would not be the operating point actually applied. (With
+    T ~0.29 the calibrated probabilities are markedly sharper, so the mismatch
+    is not a rounding detail.)
+    """
     model.eval()
     all_probs = [[] for _ in lead_times]
     all_true  = [[] for _ in lead_times]
     for batch in loader:
         batch = move_to_device(batch, device)
         out = model(batch)
-        probs = torch.sigmoid(out["severe_weather_logit"]).cpu().numpy()  # (B, L, H, W)
+        logit = out["severe_weather_logit"]
+        if temperature is not None:
+            t = torch.tensor(temperature, dtype=logit.dtype, device=logit.device)
+            logit = logit / t.view(1, -1, 1, 1)
+        probs = torch.sigmoid(logit).cpu().numpy()  # (B, L, H, W)
         true  = batch["severe_weather"].cpu().numpy()
         for li in range(len(lead_times)):
             all_probs[li].append(probs[:, li].ravel())
@@ -133,7 +147,15 @@ def main():
     model.to(device)
 
     print("[threshold] collecting validation predictions ...")
-    preds = collect_predictions(model, loaders["val"], device, lead_times)
+    # Use the checkpoint's calibration, so thresholds are chosen against the
+    # same probabilities inference will produce.
+    _temp = ckpt.get("temperature_per_lead")
+    if _temp is not None:
+        print(f"[threshold] applying temperature_per_lead={_temp}")
+    else:
+        print("[threshold] checkpoint carries no temperature; using raw sigmoid")
+    preds = collect_predictions(model, loaders["val"], device, lead_times,
+                                temperature=_temp)
 
     thresholds = np.linspace(0.05, 0.95, args.n_thresholds)
     results = {}

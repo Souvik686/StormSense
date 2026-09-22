@@ -275,12 +275,16 @@ def _colormap_observation(
         # measured mm/h, never a severe-weather probability -- and the panel's own
         # "Observed now at reporting stations · not an AI forecast" line keeps that
         # distinction explicit.
+        # Intensity is encoded by LIGHTNESS and SATURATION climbing through the
+        # cool half of the wheel, ending in violet -- not by crossing into the
+        # green/amber/red ramp the forecast risk surface owns, which
+        # test_rendered_surface_uses_a_non_risk_palette exists to prevent.
         stops = np.array([
-            [254, 240, 138],  # pale yellow (trace)
-            [250, 204, 21],   # yellow (light)
-            [245, 158, 11],   # amber (moderate)
-            [249, 115, 22],   # orange (heavy)
-            [239, 68, 68],    # red (very heavy)
+            [8, 47, 73],      # deep blue (trace)
+            [14, 116, 144],   # teal (light)
+            [34, 211, 238],   # cyan (moderate)
+            [129, 180, 255],  # bright periwinkle (heavy)
+            [196, 181, 253],  # violet (very heavy)
         ], dtype=np.float64)
     else:
         # Non-precipitation fields keep the blue/teal observation ramp: they are

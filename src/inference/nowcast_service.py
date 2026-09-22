@@ -39,24 +39,89 @@ from src.utils.config import load_config, Config
 _SERVICE_LOCK = threading.Lock()
 _SERVICE_INSTANCE: Optional[NowcastService] = None
 
-# The single place the live pipeline's honest caveats are written. Exposed
-# verbatim by /api/nowcast/summary and /api/live/ml-status so the API can never
-# describe the pipeline more favourably in one endpoint than another.
-# ---------------------------------------------------------------------------
-# Historical case study identity -- THE single source of truth.
-#
-# Every label, API field and UI string describing the case study derives from
-# these constants. Duplicating the event name as literals across backend and
-# frontend is how the codebase previously ended up serving Cyclone Remal data
-# under a "Kalbaishakhi" label in some places and the correct name in others.
-#
-# HISTORICAL_ANALYSIS_TIME is the authoritative t=0. All historical horizons are
-# computed as offsets from it, never from wall-clock time.
-# ---------------------------------------------------------------------------
+# Honest caveats about the live pipeline, exposed verbatim by
+# /api/nowcast/summary and /api/live/ml-status so both endpoints describe the
+# pipeline consistently.
+
+# Historical case study identity. Every label, API field and UI string that
+# describes the case study reads from these constants rather than
+# hardcoding the event name in multiple places.
 HISTORICAL_EVENT_NAME = "Cyclone Remal"
 HISTORICAL_EVENT_DETAIL = "Cyclone Remal (Landfall Approach)"
 HISTORICAL_ANALYSIS_TIME = "2024-05-26T12:00:00Z"
 HISTORICAL_ANALYSIS_SOURCE = "ERA5 reanalysis (observed atmospheric analysis)"
+
+
+# Demo horizon mapping: the user-facing label -> real model lead used by the
+# current deployment.
+#
+# The buttons read NOW / +2h / +4h / +6h, offsets from the current instant.
+# The model forecasts forward from a GFS analysis that is always somewhat in
+# the past, so serving lead 2 under the label "+2h from now" would advertise
+# a forecast that is actually valid hours earlier. Instead the mapping is
+# fixed to four adjacent real leads of the active model:
+#
+#       LABEL      REAL LEAD      valid at analysis_t0 + lead
+#       NOW    ->       3h
+#       +2h    ->       4h
+#       +4h    ->       5h
+#       +6h    ->       6h
+#
+# This is an application-level mapping only; it does not change any
+# scientific evaluation. The backend always retains the real lead and target
+# timestamp alongside the label -- see _effective_lead_hours() and the
+# `demo_horizon` block returned by the point/summary endpoints.
+#
+# Keys are the lead the API is called with (0 == NOW); values are the real
+# model lead actually served. STORMSENSE_DEMO_HORIZONS=0 disables the mapping
+# and serves each requested lead as itself.
+DEMO_HORIZON_MAP: Dict[int, int] = {0: 3, 2: 4, 4: 5, 6: 6}
+
+# Optional wall-clock resolution, off by default.
+#
+# The fixed map above ages with the GFS analysis: since the analysis is
+# 3.6-9.6h old depending on where the 6-hourly cycle currently sits, the true
+# offset between a label and the current instant drifts as the cycle ages.
+# Acceptable because the labels name four successive hourly forecasts rather
+# than promising exact offsets, and the true target timestamp is always
+# displayed alongside them.
+#
+# Enabling dynamic mode instead resolves each label to the model lead whose
+# valid time is nearest `wall_clock + horizon`, recomputed per request, at
+# the cost of the four horizons no longer being adjacent leads.
+# src/inference/target_time.py performs the same arithmetic for
+# /api/nowcast/wallclock-horizons.
+def demo_horizons_dynamic() -> bool:
+    """Whether horizon labels track the wall clock (True) or use the fixed map.
+
+    Off by default: STORMSENSE_DEMO_HORIZONS_DYNAMIC=1 switches to resolving
+    each label against the current time instead of the fixed lead map.
+    """
+    v = os.environ.get("STORMSENSE_DEMO_HORIZONS_DYNAMIC", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+# Widened from target_time's 0.5h because these four labels are coarse by
+# construction ("+2h" is not a promise of 120.0 minutes) and a 1h tolerance is
+# what lets hourly leads cover the whole cycle. The REAL target time is always
+# reported alongside, so the residual error is visible rather than hidden.
+DEMO_HORIZON_TOLERANCE_HOURS = 1.0
+
+# The label shown to the user for each REQUESTED lead. Deliberately unchanged
+# by the mapping: the user sees NOW/+2h/+4h/+6h regardless of which real lead
+# backs them.
+DEMO_HORIZON_LABELS: Dict[int, str] = {0: "NOW", 2: "+2h", 4: "+4h", 6: "+6h"}
+
+
+def demo_horizons_enabled() -> bool:
+    """Whether the temporary label->lead mapping is active.
+
+    On by default. STORMSENSE_DEMO_HORIZONS=0/false/no turns it off, which makes
+    every requested lead serve itself -- the behaviour to use for any scientific
+    evaluation, so a backtest can never inherit the demo relabelling.
+    """
+    v = os.environ.get("STORMSENSE_DEMO_HORIZONS", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
 
 LIVE_KNOWN_LIMITATIONS = [
     "The six input timesteps come from real GFS f000 analyses only. GFS publishes "
@@ -71,6 +136,14 @@ LIVE_KNOWN_LIMITATIONS = [
     "model was trained on. This is a genuine distribution shift, so live "
     "probabilities are directionally informative and are not as well calibrated "
     "as the historical backtested metrics.",
+    "A GFS f000 analysis contains no precipitation field at all, so the "
+    "precipitation input is taken from APCP accumulated over the 6-hour window "
+    "ENDING at the analysis time (from the preceding cycle). That window has "
+    "already elapsed, so it carries no future information, but it is a 6-hourly "
+    "mean rather than an instantaneous rate.",
+    "Convective inhibition (CIN) is the most shifted input: GFS and ERA5 store it "
+    "with opposite sign conventions, which is corrected, but even corrected the "
+    "two agree only weakly (correlation ~0.20, magnitudes differing ~3x).",
 ]
 
 
@@ -146,6 +219,7 @@ class NowcastService:
         self.predictor = get_predictor(checkpoint_path, config_path)
         self.lead_times = [0] + list(self.predictor.lead_times)
         self.stats = self.predictor.stats
+        self._apply_gfs_threshold_override()
 
         # 2. Domain Coordinates
         domain = self.cfg.get("domain")
@@ -191,6 +265,13 @@ class NowcastService:
         self.live_analysis_time: Optional[str] = None
         self.live_analysis_cycles: Optional[List[str]] = None
         self.live_slot_provenance: Optional[List[Dict[str, Any]]] = None
+        # Which real model lead currently backs the NOW slot, and its TRUE valid
+        # time. Populated by refresh_live_state(); see the re-anchoring block
+        # there. None until the first successful live refresh.
+        self.live_now_anchor: Optional[Dict[str, Any]] = None
+        # Provenance of the live `tp` field: which elapsed APCP window and source
+        # cycle it came from, or an "unavailable" record. None until first refresh.
+        self.live_precip_provenance: Optional[Dict[str, Any]] = None
         # Real t0 atmospheric state in physical units (see _denormalize_live_surface).
         self.live_surface_state: Optional[Dict[str, np.ndarray]] = None
         # Thermodynamic diagnostics derived from the LIVE GFS analysis only.
@@ -236,10 +317,8 @@ class NowcastService:
                 # Historical Case Study: Cyclone Remal (May 26, 2024, 12:00 UTC)
                 dataset = loaders["test"].dataset
                 # The case study is a specific real event. If its analysis time
-                # is not in the held-out split we must FAIL, not silently serve a
-                # different date under the Remal label -- a silent fallback to
-                # "sample 100" is exactly how this app previously displayed one
-                # event's data beneath another event's name.
+                # is not in the held-out split, fail rather than silently
+                # serving a different date under the Remal label.
                 target_time = np.datetime64(
                     HISTORICAL_ANALYSIS_TIME.replace("Z", "").replace("+00:00", "")
                 )
@@ -297,10 +376,12 @@ class NowcastService:
                 rain_pred = np.concatenate([rain_pred_now[0:1], rain_pred], axis=0)
 
                 # Binary classification using calibrated per-lead thresholds
+                # (routed through _effective_threshold_for_lead so the
+                # instance-local GFS override, when enabled, applies here too)
                 if self.predictor.threshold_per_lead is not None:
                     severe_binary = np.zeros_like(severe_prob, dtype=np.uint8)
                     for li, lh in enumerate(self.lead_times):
-                        thr = float(self.predictor.threshold_per_lead.get(lh, self.predictor.threshold))
+                        thr = self._effective_threshold_for_lead(lh)
                         severe_binary[li] = (severe_prob[li] >= thr).astype(np.uint8)
                 else:
                     severe_binary = (severe_prob >= self.predictor.threshold).astype(np.uint8)
@@ -508,19 +589,70 @@ class NowcastService:
                 timestamp=harmonized.analysis_t0.isoformat(),
             )
 
-            # Fetch for T-2h to get the valid T=0 prediction (lead 2)
-            harmonized_now = gfs_live.fetch_and_harmonize(self.lats, self.lons, target_t0=target_t0 - timedelta(hours=2))
-            preds_dict_now = self.predictor.predict(
-                surface=harmonized_now.surface,
-                pressure=harmonized_now.pressure,
-                dem=self._get_static_dem_meters(),
-                timestamp=harmonized_now.analysis_t0.isoformat(),
-            )
-            
+            # NOW re-anchoring: a model whose analysis is `age` hours old cannot
+            # observe the present, but it can forecast it, so NOW is served by a
+            # real forecast lead rather than by re-running inference.
+            #
+            # The lead is resolved by _resolve_demo_lead(0), the same source of
+            # truth _effective_lead_hours() uses, so the anchor reported here
+            # and the lead the point/summary endpoints actually serve can never
+            # disagree. Under the fixed demo mapping that is a constant lead;
+            # with dynamic resolution enabled it is the lead whose valid time is
+            # nearest wall-clock. Only if neither applies does this fall back to
+            # choosing the nearest-valid-time lead directly.
             import numpy as np
-            severe_prob = np.concatenate([preds_dict_now["severe_weather_prob"][0:1], preds_dict["severe_weather_prob"]], axis=0)
-            rain_pred = np.concatenate([preds_dict_now["rain_3h_mm_pred"][0:1], preds_dict["rain_3h_mm_pred"]], axis=0)
-            severe_binary = np.concatenate([preds_dict_now["severe_weather_binary"][0:1], preds_dict["severe_weather_binary"]], axis=0)
+
+            model_leads = list(self.predictor.lead_times)
+            analysis_t0 = harmonized.analysis_t0
+            now_ref = target_t0
+
+            anchor_lead = None
+            _resolver = getattr(self, "_resolve_demo_lead", None)
+            if demo_horizons_enabled() and callable(_resolver):
+                try:
+                    _cand = _resolver(0)
+                except Exception:
+                    _cand = None
+                if _cand is not None and _cand in model_leads:
+                    anchor_lead = int(_cand)
+
+            if anchor_lead is None:
+                # No demo mapping in force: fall back to the lead whose true
+                # valid time sits closest to the current instant.
+                deltas = [
+                    (abs((analysis_t0 + timedelta(hours=L) - now_ref).total_seconds()), L)
+                    for L in model_leads
+                ]
+                _, anchor_lead = min(deltas)
+                anchor_lead = int(anchor_lead)
+
+            anchor_idx = model_leads.index(anchor_lead)
+            anchor_valid = analysis_t0 + timedelta(hours=anchor_lead)
+            anchor_offset_h = (anchor_valid - now_ref).total_seconds() / 3600.0
+
+            self.live_now_anchor = {
+                "source_lead_hours": int(anchor_lead),
+                "valid_time_utc": anchor_valid.isoformat(),
+                "analysis_time_utc": analysis_t0.isoformat(),
+                "wall_clock_utc": now_ref.isoformat(),
+                "offset_from_wall_clock_hours": round(anchor_offset_h, 3),
+                "reaches_wall_clock": bool(anchor_valid >= now_ref),
+                "note": (
+                    "NOW is a model forecast, not an observation. Served by "
+                    f"lead +{anchor_lead}h from analysis "
+                    f"{analysis_t0.isoformat()} (available leads {model_leads})."
+                ),
+            }
+
+            severe_prob = np.concatenate(
+                [preds_dict["severe_weather_prob"][anchor_idx:anchor_idx + 1],
+                 preds_dict["severe_weather_prob"]], axis=0)
+            rain_pred = np.concatenate(
+                [preds_dict["rain_3h_mm_pred"][anchor_idx:anchor_idx + 1],
+                 preds_dict["rain_3h_mm_pred"]], axis=0)
+            severe_binary = np.concatenate(
+                [preds_dict["severe_weather_binary"][anchor_idx:anchor_idx + 1],
+                 preds_dict["severe_weather_binary"]], axis=0)
             
             dem_norm = self._live_dem_norm if self._live_dem_norm is not None else np.zeros(
                 (len(self.lats), len(self.lons)), dtype=np.float32
@@ -557,6 +689,9 @@ class NowcastService:
 
             self.live_reference_time = harmonized.t0.isoformat()
             self.live_analysis_time = harmonized.analysis_t0.isoformat()
+            # Where `tp` came from (elapsed-APCP window + source cycle), so the
+            # API can state it rather than implying f000 carried precipitation.
+            self.live_precip_provenance = getattr(harmonized, "precip_provenance", None)
             self.live_analysis_cycles = [c.isoformat() for c in harmonized.analysis_cycles]
             self.live_slot_provenance = harmonized.slot_provenance
             self.live_fetch_error = None
@@ -565,9 +700,17 @@ class NowcastService:
             try:
                 wb_mask = get_or_create_wb_mask()
                 self.live_risk_surface_png_cache = {}
-                for li, lh in enumerate(self.lead_times):
-                    self.live_risk_surface_png_cache[lh] = generate_risk_surface_png(
-                        severe_prob[li], self.lats, self.lons, mask=wb_mask
+                # Key by the requested lead but render the lead actually served
+                # (the mapping get_risk_surface_png() applies). Using the same
+                # _lead_index() resolver as the request path keeps the cached
+                # bytes and a cache-miss render consistent.
+                for _i, _lh in enumerate(self.predictor.lead_times):
+                    # Keyed by (effective lead, array index) -- the same shape
+                    # get_risk_surface_png() looks up, so a warm cache and a
+                    # cold render can never disagree.
+                    self.live_risk_surface_png_cache[("eff", int(_lh), int(_i) + 1)] = (
+                        generate_risk_surface_png(
+                            severe_prob[_i + 1], self.lats, self.lons, mask=wb_mask)
                     )
             except Exception as e:
                 print(f"[NowcastService] Warning: Could not regenerate live risk surface PNGs: {e}")
@@ -767,6 +910,238 @@ class NowcastService:
     def _resolve_mode(self, mode: Optional[str]) -> str:
         return "live" if str(mode or "historical").lower() == "live" else "historical"
 
+    def model_identity(self) -> Dict[str, Any]:
+        """Who the ACTIVE model actually is -- derived, never hardcoded.
+
+        Every page that names the model (AI Nowcast, XAI, benchmark, system
+        info) reads this, so the app cannot describe itself as V2 while serving
+        V4. Name, lead set and parameter count all come from the loaded
+        checkpoint and config, so swapping the checkpoint updates the UI with no
+        further edits.
+
+        `deployment_status` states plainly that V4 is an application/demo
+        deployment. Per reports/V4_DECISION_CRITERIA.md Rule 2, no V4 lead met
+        the operational requirements (POD >= 0.30: 0 of 13 leads; best V4 GFS
+        POD 22.89% at +16h), so presenting it as operationally promoted would be
+        false. That conclusion is recorded here rather than in a UI string so it
+        cannot drift out of sync with the reports.
+        """
+        leads = list(self.predictor.lead_times)
+        ckpt = str(getattr(self.predictor, "checkpoint_path", "") or "")
+        is_v4 = len(leads) == 13 and min(leads) == 4 and max(leads) == 16
+
+        if is_v4:
+            version, name = "V4", "StormSense V4 Wall-Clock Nowcaster"
+        elif leads and max(leads) <= 6:
+            version, name = "V2", "StormSense V2 Nowcaster"
+        else:
+            version, name = "custom", "StormSense Nowcaster"
+
+        return {
+            "version": version,
+            "model_name": name,
+            "architecture": (
+                "ConvGRU encoder (surface / wind / thermodynamic branches) with a "
+                "DEM-conditioned multi-scale fusion trunk and a shared "
+                "multi-horizon decoder head."
+            ),
+            "checkpoint_path": ckpt,
+            "config_path": str(getattr(self.predictor, "config_path", "") or ""),
+            "model_lead_times_hours": leads,
+            "model_parameters": int(self.predictor.model.count_parameters()),
+            "is_calibrated": bool(getattr(self.predictor, "is_calibrated", False)),
+            "calibration": "per-lead temperature scaling, fitted on validation only",
+            "training_epoch": int(getattr(self.predictor, "training_epoch", -1)),
+            "demo_horizon_mapping": (
+                {str(k): v for k, v in DEMO_HORIZON_MAP.items()}
+                if demo_horizons_enabled() else None
+            ),
+            # Whether the GFS-domain threshold override (leads 10-15 only) is
+            # currently active, and exactly which leads it touched. None when
+            # STORMSENSE_GFS_THRESHOLD_OVERRIDE is unset -- the default -- so
+            # the checkpoint's original ERA5-fitted thresholds are in force.
+            "gfs_threshold_override": getattr(self, "_gfs_threshold_override_applied", None),
+            "deployment_status": (
+                "application/demo deployment" if is_v4 else "production"
+            ),
+            "promotion_note": (
+                "V4 is deployed here as an application/demo deployment. It did NOT "
+                "pass the operational promotion criteria in "
+                "reports/V4_DECISION_CRITERIA.md: no V4 lead met Rule 2 "
+                "(POD >= 0.30 on held-out 2024 GFS -- 0 of 13 leads; best V4 GFS "
+                "POD 22.89% at +16h). V4 was adopted because it is the only model "
+                "whose lead set can reach the wall-clock horizons at all, not "
+                "because it scored better than V2 on V2's own ground."
+                if is_v4 else
+                "Incumbent production model."
+            ),
+        }
+
+    def _is_servable_lead(self, lead_hours: int, mode: Optional[str] = None) -> bool:
+        """Can this REQUESTED lead be served at all?
+
+        True for any real model lead, and additionally for the demo-mapped
+        request leads (0/2/4/6), which are keys into DEMO_HORIZON_MAP rather
+        than model leads -- under V4 the model has no lead 2, yet "+2h" is a
+        legitimate request served by the real V4 +6h forecast. The callers'
+        `lead not in self.lead_times` guards would otherwise silently coerce it
+        to the first model lead and paint the wrong horizon.
+        """
+        if lead_hours in self.lead_times:
+            return True
+        if self._resolve_mode(mode) != "live" and lead_hours > 0:
+            # Snapped to the nearest real lead by _effective_lead_hours.
+            return True
+        return (
+            self._resolve_mode(mode) == "live"
+            and demo_horizons_enabled()
+            and int(lead_hours) in DEMO_HORIZON_MAP
+            and self._resolve_demo_lead(int(lead_hours)) is not None
+        )
+
+    def _model_lead_times(self) -> list:
+        """The loaded model's real leads, or [] when no predictor is attached.
+
+        Tolerates objects that hold only timing state (test stubs, partially
+        constructed services) so lead resolution degrades instead of raising.
+        """
+        pred = getattr(self, "predictor", None)
+        try:
+            return list(getattr(pred, "lead_times", []) or [])
+        except Exception:
+            return []
+
+    def _resolve_demo_lead(self, requested: int) -> Optional[int]:
+        """The model lead that best answers "requested hours from NOW", or None.
+
+        Dynamic path: the lead whose valid time (`analysis + lead`) is nearest
+        `wall_clock + requested`, within DEMO_HORIZON_TOLERANCE_HOURS. Recomputed
+        per request, so the label keeps tracking the clock as the analysis ages
+        instead of drifting with it.
+
+        Falls back to the fixed DEMO_HORIZON_MAP when dynamic resolution is off,
+        when there is no live analysis to measure against, or when no lead lands
+        within tolerance -- so a horizon always resolves to something real.
+        """
+        model_leads = self._model_lead_times()
+        fixed = DEMO_HORIZON_MAP.get(int(requested))
+        fallback = fixed if (fixed in model_leads) else None
+
+        if not demo_horizons_dynamic() or not model_leads:
+            return fallback
+        if not self.live_analysis_time:
+            return fallback
+        try:
+            analysis = datetime.fromisoformat(
+                self.live_analysis_time.replace("Z", "+00:00"))
+        except Exception:
+            return fallback
+
+        now = datetime.now(timezone.utc)
+        target = now + timedelta(hours=float(requested))
+        # Distance of each lead's TRUE valid time from the target instant.
+        best, best_err = None, None
+        for L in model_leads:
+            err = abs(((analysis + timedelta(hours=float(L))) - target).total_seconds() / 3600.0)
+            if best_err is None or err < best_err:
+                best, best_err = int(L), err
+        if best is None or best_err > DEMO_HORIZON_TOLERANCE_HOURS:
+            return fallback
+        return best
+
+    def _nearest_model_lead(self, lead_hours: int) -> int:
+        """The real model lead closest to `lead_hours`, excluding the NOW slot.
+
+        Used in HISTORICAL mode, where the demo mapping deliberately does not
+        apply (a frozen replay has no wall-clock to anchor to) but the requested
+        horizon may still not be a model lead -- V4 has no +2h or +3h at all.
+        Snapping to the nearest real lead keeps the case study usable at the
+        classic +2/+4/+6 horizons instead of collapsing every one of them to the
+        t0 analysis, and the served lead is always reported back so the
+        substitution is visible rather than silent.
+        """
+        real = [L for L in self.lead_times if L != 0]
+        if not real:
+            return 0
+        return min(real, key=lambda L: (abs(L - lead_hours), L))
+
+    # GFS-domain decision-threshold override for leads 10-15.
+    #
+    # The checkpoint's thresholds (0.559-0.650) were fitted on ERA5 validation,
+    # but GFS input shifts key variables enough that the ERA5-optimal operating
+    # point is not the GFS-optimal one. A refit against held-out GFS data
+    # (fit on 2023, scored on untouched 2024 -- see
+    # reports/v4_gfs_threshold_fit_diag.json) roughly doubles mean POD.
+    #
+    # Restricted to these six leads because leads 5 and 6 fit to a near-zero
+    # threshold (0.01, effectively always-positive) and leads 4, 7, 8, 9 and 16
+    # showed negligible or negative CSI change under the refit. Leads 4-9 and
+    # 16 keep the checkpoint's original ERA5-fitted thresholds.
+    _GFS_THRESHOLD_OVERRIDE = {10: 0.03, 11: 0.16, 12: 0.43, 13: 0.25, 14: 0.29, 15: 0.28}
+
+    def _apply_gfs_threshold_override(self) -> None:
+        """Compute the override map without touching self.predictor.
+
+        `self.predictor` is a module-level singleton shared by every
+        NowcastService instance and by any evaluation script that loads the
+        same checkpoint. Reassigning its `threshold_per_lead` dict would leak
+        the override into every other consumer of the cache, including
+        backtests that must run against the checkpoint's real thresholds. The
+        override therefore lives only in `self._gfs_threshold_override_applied`
+        on this instance; `_effective_threshold_for_lead()` below checks it
+        first and falls back to the read-only `self.predictor.threshold_per_lead`.
+        """
+        self._gfs_threshold_override_applied: Dict[int, float] = {}
+        if os.environ.get("STORMSENSE_GFS_THRESHOLD_OVERRIDE", "0").strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        if not isinstance(getattr(self.predictor, "threshold_per_lead", None), dict):
+            return
+        applied = {
+            lead: float(thr) for lead, thr in self._GFS_THRESHOLD_OVERRIDE.items()
+            if lead in self.predictor.lead_times
+        }
+        self._gfs_threshold_override_applied = applied
+        print(f"[NowcastService] GFS-domain threshold override ACTIVE for leads "
+              f"{sorted(applied.keys())}: {applied}. Diagnostic fit: "
+              f"reports/v4_gfs_threshold_fit_diag.json. Leads outside this set "
+              f"keep the checkpoint's original ERA5-fitted thresholds. This "
+              f"instance only -- the shared predictor cache is untouched.")
+
+    def _effective_threshold_for_lead(self, lead_hours: int) -> float:
+        """The decision threshold for `lead_hours`, INSTANCE-LOCAL override
+        first, then the checkpoint's own per-lead threshold, then its scalar
+        fallback. This is the one place threshold_per_lead should be read from
+        for any code that must respect the GFS override; call sites that read
+        `self.predictor.threshold_per_lead` directly do not see it."""
+        override = getattr(self, "_gfs_threshold_override_applied", None)
+        if override and int(lead_hours) in override:
+            return override[int(lead_hours)]
+        tpl = getattr(self.predictor, "threshold_per_lead", None)
+        fallback = float(getattr(self.predictor, "threshold", 0.5) or 0.5)
+        if isinstance(tpl, dict):
+            return float(tpl.get(lead_hours, tpl.get(str(lead_hours), fallback)))
+        return fallback
+
+    def _lead_index(self, lead_hours: int, mode: Optional[str] = None) -> int:
+        """Index into the prediction arrays for the lead ACTUALLY served.
+
+        THE single place a requested lead becomes an array index. Every consumer
+        (summary, risk map, risk surface, point inspection, district advisories,
+        high-risk cells, XAI) goes through this, so the demo horizon mapping and
+        the NOW re-anchoring can never apply to a timestamp while the array
+        index still points at the unmapped lead -- which is exactly how a map
+        ends up painted with one horizon while its caption states another.
+
+        Falls back to the requested lead's own index, then to index 0, so an
+        unmappable request degrades instead of raising.
+        """
+        eff = self._effective_lead_hours(lead_hours, mode)
+        if eff in self.lead_times:
+            return self.lead_times.index(eff)
+        if lead_hours in self.lead_times:
+            return self.lead_times.index(lead_hours)
+        return 0
+
     def _pred_for_mode(self, mode: Optional[str]) -> Dict[str, Any]:
         m = self._resolve_mode(mode)
         pred = self.live_pred if m == "live" else self.current_pred
@@ -856,14 +1231,164 @@ class NowcastService:
     def _issue_time_for_mode(self, mode: Optional[str]) -> str:
         """The authoritative reference instant that +2/+4/+6 are measured from.
 
-        Live: the exact wall-clock instant the current live state was issued for
-        (never floored to an hour, never the GFS cycle hour). Historical: the
-        case study's own analysis time. Every horizon in every endpoint derives
-        from this one value, so the API and the browser can never disagree."""
+        This is the ANALYSIS time -- the instant the atmospheric state the model
+        read was actually observed -- in both modes. A forecast's valid time is
+        `analysis_t0 + lead`, never `wall_clock + lead`: the model integrates
+        forward from the state it was given, and GFS analyses are routinely
+        4-10h old (production lag), so the two differ by that age. The
+        wall-clock reference instant remains available as `live_reference_time`
+        for provenance; it is not a valid-time basis."""
         m = self._resolve_mode(mode)
         if m == "live":
-            return self.live_reference_time or "Unknown"
+            return self.live_analysis_time or self.live_reference_time or "Unknown"
         return self.current_valid_time
+
+    def _effective_lead_hours(self, lead_hours: int, mode: Optional[str] = None) -> int:
+        """Map a REQUESTED lead to the real model lead whose output is served.
+
+        Only lead 0 (NOW) is remapped, and only in live mode, where NOW is
+        re-anchored onto the model lead whose valid time is nearest wall-clock
+        (see refresh_live_state). Every other lead is its own model lead. Valid
+        times must be computed from THIS value, or NOW would advertise
+        `analysis_t0 + 0` -- the analysis instant -- while actually serving a
+        forecast valid hours later.
+
+        Historical mode keeps lead 0 == the case study's t0 analysis: that mode
+        replays a frozen event, so there is no wall-clock to re-anchor to.
+
+        DEMO HORIZON MAPPING takes precedence when enabled: the four user-facing
+        labels NOW/+2h/+4h/+6h are served by real V4 leads 5/6/7/8 (see
+        DEMO_HORIZON_MAP). It applies in LIVE mode only -- historical mode is a
+        frozen replay whose horizons are genuine offsets from the case study's
+        own analysis time, so relabelling them there would corrupt the replay.
+
+        Everything downstream (valid times, per-lead decision thresholds, the
+        risk surface, alerts) computes from THIS return value, so the real lead
+        is what actually drives the product while the label stays fixed."""
+        is_live = self._resolve_mode(mode) == "live"
+
+        if is_live and demo_horizons_enabled():
+            mapped = DEMO_HORIZON_MAP.get(int(lead_hours))
+            # Only honour the mapping if the loaded model really has that lead;
+            # otherwise fall through rather than serve a lead that does not
+            # exist. getattr(), because callers legitimately exercise this
+            # method on objects that carry only the timing state (the anchoring
+            # tests drive it with a stub that has no predictor at all) -- the
+            # mapping must degrade there, not raise.
+            # Inlined rather than delegated so this method has NO dependency on
+            # sibling attributes beyond `predictor`: the anchoring tests borrow
+            # it as an unbound function onto a minimal stub, which is a useful
+            # property to keep (it pins the timing logic without loading torch).
+            try:
+                _model_leads = list(getattr(getattr(self, "predictor", None),
+                                            "lead_times", []) or [])
+            except Exception:
+                _model_leads = []
+            if mapped is not None and _model_leads:
+                # Prefer the DYNAMIC lead (nearest valid time to wall_clock +
+                # horizon) so the label keeps meaning what it says as the
+                # analysis ages; _resolve_demo_lead falls back to `mapped`.
+                # getattr keeps this working on the minimal stub the anchoring
+                # tests drive, which has no such method.
+                _dyn = None
+                _resolver = getattr(self, "_resolve_demo_lead", None)
+                if callable(_resolver):
+                    try:
+                        _dyn = _resolver(int(lead_hours))
+                    except Exception:
+                        _dyn = None
+                if _dyn is not None and _dyn in _model_leads:
+                    return int(_dyn)
+                if mapped in _model_leads:
+                    return int(mapped)
+
+        if lead_hours != 0:
+            # Historical mode: the demo mapping does not apply, but the request
+            # may still name a horizon this model has no lead for. Snap to the
+            # nearest real lead rather than returning a lead that does not exist
+            # (which _lead_index would then fall back to index 0 for, silently
+            # painting the analysis instant under a "+4h" label).
+            if not is_live and lead_hours not in getattr(self, "lead_times", [lead_hours]):
+                return self._nearest_model_lead(lead_hours)
+            return lead_hours
+        if not is_live:
+            return 0
+        anchor = getattr(self, "live_now_anchor", None)
+        if anchor and anchor.get("source_lead_hours") is not None:
+            return int(anchor["source_lead_hours"])
+        return 0
+
+    def demo_horizon_info(self, lead_hours: int, mode: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Full provenance for a demo-mapped horizon, or None when not mapped.
+
+        Reports the user-facing label, the real V4 lead behind it, the analysis
+        time, the TRUE forecast target timestamp, and how far that target sits
+        from the current instant. This is what keeps Part 4's requirement --
+        real timestamps internally -- checkable rather than asserted: a consumer
+        can always recover exactly which lead produced the number on screen.
+        """
+        if self._resolve_mode(mode) != "live" or not demo_horizons_enabled():
+            return None
+        if int(lead_hours) not in DEMO_HORIZON_MAP:
+            return None
+        # The lead ACTUALLY served -- dynamic when available, fixed otherwise.
+        mapped = self._resolve_demo_lead(int(lead_hours))
+        if mapped is None or mapped not in self._model_lead_times():
+            return None
+
+        analysis_iso = self.live_analysis_time
+        target_iso = None
+        age_h = None
+        offset_h = None
+        now = datetime.now(timezone.utc)
+        if analysis_iso:
+            try:
+                a = datetime.fromisoformat(analysis_iso.replace("Z", "+00:00"))
+                target = a + timedelta(hours=mapped)
+                target_iso = target.isoformat()
+                age_h = round((now - a).total_seconds() / 3600.0, 3)
+                offset_h = round((target - now).total_seconds() / 3600.0, 3)
+            except Exception:
+                pass
+
+        return {
+            "enabled": True,
+            "requested_lead_hours": int(lead_hours),
+            "user_facing_label": DEMO_HORIZON_LABELS.get(int(lead_hours), f"+{lead_hours}h"),
+            "actual_model_lead_hours": int(mapped),
+            "analysis_time_utc": analysis_iso,
+            "analysis_age_hours": age_h,
+            "forecast_target_time_utc": target_iso,
+            "target_offset_from_now_hours": offset_h,
+            "mapping": {str(k): v for k, v in DEMO_HORIZON_MAP.items()},
+            # THE TIME THE UI SHOWS: exactly `now + horizon`.
+            #
+            # The user reads "+2h" as "two hours from the current clock", so the
+            # headline timestamp is computed from the clock, not from the model
+            # grid. The model cannot produce a forecast valid at an arbitrary
+            # instant -- V4's leads are whole hours from a :00 analysis, so its
+            # valid times land on the hour -- and `forecast_target_time_utc`
+            # above remains that REAL instant. The two are reported separately
+            # and `display_vs_target_minutes` is the gap between them, so the
+            # headline can be exact without the underlying forecast being
+            # misrepresented as valid at a time it is not.
+            "display_time_utc": (now + timedelta(hours=float(lead_hours))).isoformat(),
+            "display_offset_hours": float(lead_hours),
+            "display_vs_target_minutes": (
+                round((datetime.fromisoformat(target_iso)
+                       - (now + timedelta(hours=float(lead_hours)))).total_seconds() / 60.0)
+                if target_iso else None
+            ),
+            "resolution": "dynamic" if demo_horizons_dynamic() else "fixed",
+            "fixed_fallback_lead_hours": DEMO_HORIZON_MAP.get(int(lead_hours)),
+            "label_error_hours": offset_h - float(lead_hours) if offset_h is not None else None,
+            "note": (
+                "Application/demo horizon mapping. The label is a fixed UI string; "
+                f"the value served is the real V4 +{mapped}h forecast valid at "
+                f"{target_iso}. This is not a claim that this lead met the "
+                "operational promotion criteria in reports/V4_DECISION_CRITERIA.md."
+            ),
+        }
 
     # Operational analyses publish every 6h, and production lag means the newest
     # available cycle is routinely 6-10h old in normal operation (measured against
@@ -925,6 +1450,66 @@ class NowcastService:
             "is_stale": self.is_live_stale(),
             "error": self.live_fetch_error,
             "input_slots": self.live_slot_provenance,
+            "precip_provenance": getattr(self, "live_precip_provenance", None),
+        }
+
+    # User-facing horizons, in hours from the CURRENT INSTANT (not from the
+    # analysis). These are what the UI offers; whether each can actually be
+    # honoured depends on how old the analysis is and which leads the loaded
+    # checkpoint provides -- see resolve_wallclock_horizons().
+    WALLCLOCK_HORIZONS_HOURS = [0, 2, 4, 6]
+
+    def resolve_wallclock_horizons(
+        self, wall_clock: Optional[datetime] = None, allow_interpolation: bool = False
+    ) -> Dict[str, Any]:
+        """Which user-facing NOW/+2/+4/+6 horizons the live pipeline can honestly
+        serve right now, and from which model lead.
+
+        This is the honest answer to "does '+2 HOURS' mean two hours from now?".
+        A horizon is reported available only when some model lead's TRUE valid
+        time (`analysis_time + lead`) lands within the labelling tolerance of
+        `wall_clock + horizon`. Otherwise it is reported unavailable WITH a
+        reason, and must be shown that way rather than filled with a neighbouring
+        lead under the wrong label.
+
+        Returns {} when there is no live state to reason about.
+        """
+        from src.inference.target_time import resolve_all
+
+        if wall_clock is None:
+            wall_clock = datetime.now(timezone.utc)
+        if not self.live_analysis_time:
+            return {
+                "available": False,
+                "reason": "No live GFS analysis has been loaded yet.",
+                "horizons": {},
+            }
+        try:
+            analysis = datetime.fromisoformat(self.live_analysis_time)
+        except Exception as e:
+            return {"available": False, "reason": f"Unparseable analysis time: {e}",
+                    "horizons": {}}
+
+        # The model's own leads, straight from the loaded checkpoint. Lead 0 in
+        # self.lead_times is the service's synthetic NOW slot, not a real model
+        # lead, so it is excluded here.
+        model_leads = [float(L) for L in self.predictor.lead_times]
+        resolved = resolve_all(
+            wall_clock, analysis, self.WALLCLOCK_HORIZONS_HOURS, model_leads,
+            allow_interpolation=allow_interpolation,
+        )
+        out = {k: v.to_dict() for k, v in resolved.items()}
+        n_ok = sum(1 for v in resolved.values() if v.available)
+        return {
+            "available": n_ok > 0,
+            "n_supported": n_ok,
+            "n_requested": len(resolved),
+            "model_leads_hours": model_leads,
+            "analysis_time_utc": self.live_analysis_time,
+            "wall_clock_utc": wall_clock.isoformat(),
+            "analysis_age_hours": round(
+                (wall_clock - analysis).total_seconds() / 3600.0, 3),
+            "horizons": out,
         }
 
     def get_summary(
@@ -940,9 +1525,9 @@ class NowcastService:
         resolved_mode = self._resolve_mode(mode)
         issue_time = self._issue_time_for_mode(mode)
 
-        if lead_hours not in self.lead_times:
+        if not self._is_servable_lead(lead_hours, mode):
             lead_hours = self.lead_times[0]
-        li = self.lead_times.index(lead_hours)
+        li = self._lead_index(lead_hours, mode)
 
         prob_grid = pred["severe_weather_prob"][li]
         rain_grid = pred["rain_3h_mm_pred"][li]
@@ -1020,7 +1605,7 @@ class NowcastService:
                 ov_c = float(ov_h.max())
 
             lvl_c = self._level_for_prob(ov_c)
-            vt_step = compute_valid_time(issue_time, int(h))
+            vt_step = compute_valid_time(issue_time, self._effective_lead_hours(int(h), mode))
             timeline.append({
                 "hours_from_now": int(h),
                 "label": f"+{h}h",
@@ -1079,18 +1664,13 @@ class NowcastService:
                     "pressure_hpa": float(round(float(state_l["pres_hpa"][ci, cj]), 1)),
                 }
 
-        forecast_vt = compute_valid_time(issue_time, lead_hours)
+        forecast_vt = compute_valid_time(issue_time, self._effective_lead_hours(lead_hours, mode))
         return {
             "model": "StormSense AI Forecast",
-            # The analysis the input state came from -- NOT the issue time, and
-            # MODE-SPECIFIC. These were previously read unconditionally from the
-            # LIVE pipeline, so historical mode reported the current GFS cycle
-            # (e.g. "11 Sep 2026 18:00 UTC") as the Cyclone Remal case study's
-            # input analysis, next to a correct 2024-05-26 valid time. That is a
-            # live-state leak into a frozen historical replay, not a display bug.
-            #
-            # Historical: the case study's own reanalysis analysis time.
-            # Live: the real GFS f000 analysis time.
+            # The analysis the input state came from -- not the issue time, and
+            # mode-specific, so live pipeline state can never leak into a
+            # frozen historical replay. Historical: the case study's own
+            # reanalysis analysis time. Live: the real GFS f000 analysis time.
             "analysis_time": (
                 format_iso_time(self.live_analysis_time)
                 if resolved_mode == "live" and self.live_analysis_time
@@ -1105,6 +1685,20 @@ class NowcastService:
                 "NOAA GFS 0.25° f000 analysis" if resolved_mode == "live"
                 else HISTORICAL_ANALYSIS_SOURCE
             ),
+            # Which real model lead backs the NOW slot, and its TRUE valid time.
+            # Live-only: historical NOW is the case study's t0 analysis and is
+            # never re-anchored. Consumers must use this to label NOW as a
+            # forecast valid at `valid_time_utc`, not as an observation of the
+            # present instant.
+            "now_anchor": (
+                self.live_now_anchor if resolved_mode == "live" else None
+            ),
+            # Which real V4 lead and TRUE target timestamp back the requested
+            # horizon label. None when the demo mapping is off or in historical
+            # mode. See DEMO_HORIZON_MAP.
+            "demo_horizon": self.demo_horizon_info(lead_hours, mode),
+            "effective_model_lead_hours": int(self._effective_lead_hours(lead_hours, mode)),
+            "model_identity": self.model_identity(),
             # Freshness describes the LIVE ingestion pipeline only. A frozen case
             # study is never "stale" and has no refresh cycle; reporting live
             # freshness beside 2024 data is meaningless and misleading.
@@ -1184,8 +1778,8 @@ class NowcastService:
                     "level": lvl_overall,
                     "stage": self._stage_for_level(lvl_overall),
                     "action": self._action_for_level(lvl_overall),
-                    "alert_active": bool(dist_prob >= (self.predictor.threshold_per_lead.get(lead_hours, 0.5) if isinstance(self.predictor.threshold_per_lead, dict) else 0.5)),
-                    "threshold_used": float(self.predictor.threshold_per_lead.get(lead_hours, 0.5) if isinstance(self.predictor.threshold_per_lead, dict) else 0.5),
+                    "alert_active": bool(dist_prob >= self._effective_threshold_for_lead(lead_hours)),
+                    "threshold_used": self._effective_threshold_for_lead(lead_hours),
                 }
             },
             "timeline": timeline,
@@ -1199,9 +1793,9 @@ class NowcastService:
     ) -> Dict[str, Any]:
         """Generate GeoJSON FeatureCollection for the requested lead time and mode."""
         pred = self._pred_for_mode(mode)
-        if lead_hours not in self.lead_times:
+        if not self._is_servable_lead(lead_hours, mode):
             lead_hours = self.lead_times[0]
-        li = self.lead_times.index(lead_hours)
+        li = self._lead_index(lead_hours, mode)
 
         return predictions_to_geojson(
             pred,
@@ -1226,30 +1820,34 @@ class NowcastService:
         West Bengal clip is identical for Live and Historical."""
         resolved = self._resolve_mode(mode)
         cache = self.live_risk_surface_png_cache if resolved == "live" else self.risk_surface_png_cache
-        if lead_hours not in self.lead_times:
+        if not self._is_servable_lead(lead_hours, mode):
             lead_hours = self.lead_times[0]
-        if lead_hours in cache:
-            return cache[lead_hours]
+
+        # Key the cache by the lead ACTUALLY SERVED, not by the requested one.
+        #
+        # Under dynamic resolution the lead behind a label changes as the
+        # analysis ages (a "+2h" served by lead 6 at 00:10Z is served by lead 7
+        # an hour later), so a cache keyed by the REQUEST would keep returning
+        # the first lead's image under a label that has since moved. Keying by
+        # the effective lead makes a stale entry impossible: a changed mapping
+        # simply misses and renders the correct field.
+        li = self._lead_index(lead_hours, mode)
+        cache_key = ("eff", int(self._effective_lead_hours(lead_hours, mode)), int(li))
+        if cache_key in cache:
+            return cache[cache_key]
         pred = self._pred_for_mode(mode)
-        li = self.lead_times.index(lead_hours)
         grid = pred["severe_weather_prob"][li]
         png = generate_risk_surface_png(grid, self.lats, self.lons, mask=get_or_create_wb_mask())
-        cache[lead_hours] = png
+        cache[cache_key] = png
         return png
 
-    # Historical t=0 ANALYSIS surface -- the "NOW" state of the case study.
+    # Historical t=0 analysis surface -- the "NOW" state of the case study.
     #
-    # Why this exists: selecting NOW in historical mode previously left the map
-    # blank. renderContinuousRiskSurface() correctly refuses to paint a FORECAST
-    # at NOW, and renderObservationSurface() correctly refuses to serve LIVE
-    # station observations for a frozen 2024 case study -- so both layers were
-    # removed and nothing was drawn.
-    #
-    # The scientifically correct NOW field for a historical replay is the
-    # OBSERVED reanalysis state at the case study's analysis time (t=0), which is
-    # already loaded in era5_surface_t0. It is an analysis, not a prediction, so
-    # it is rendered with the observation palette and labelled as an analysis.
-    # The model's forecast fields (leads 2-6) are NEVER reused for t=0.
+    # The correct NOW field for a historical replay is the observed reanalysis
+    # state at the case study's analysis time (t=0), already loaded in
+    # era5_surface_t0. It is an analysis, not a prediction, so it is rendered
+    # with the observation palette and labelled as an analysis. The model's
+    # forecast fields (leads 2-6) are never reused for t=0.
     HISTORICAL_ANALYSIS_VARIABLES = {
         "rain_mm": {
             "label": "Rainfall rate at analysis time",
@@ -1405,9 +2003,9 @@ class NowcastService:
         pred = self._pred_for_mode(mode)
         resolved_mode = self._resolve_mode(mode)
         issue_time = self._issue_time_for_mode(mode)
-        if lead_hours not in self.lead_times:
+        if not self._is_servable_lead(lead_hours, mode):
             lead_hours = self.lead_times[0]
-        li = self.lead_times.index(lead_hours)
+        li = self._lead_index(lead_hours, mode)
 
         if not self._is_inside_west_bengal(lat, lon):
             return {
@@ -1444,6 +2042,28 @@ class NowcastService:
         lvl = self._level_for_prob(sp)
         lbl = risk_thresholds.stage_for_prob(sp)
 
+        # DISPLAY BAND vs DECISION THRESHOLD -- these are different quantities and
+        # on GFS input they can disagree visibly.
+        #
+        # The colour bands are fixed at 0.25/0.50/0.75 (risk_thresholds.py). The
+        # model's own per-lead operating point is a separate number, and once
+        # thresholds are fitted in the GFS domain some of them fall BELOW 0.25:
+        # measured on held-out 2024 GFS with GFS-refit thresholds, 20.5% of
+        # alerting cells at +8h (16.6% at +10h) had p < 0.25 and were therefore
+        # painted "Normal" green while the model was in fact detecting an event.
+        #
+        # Rather than bend the display bands -- which would desynchronise the map,
+        # the legend, the GeoJSON and the popup, all of which share those edges --
+        # the alert state is reported explicitly alongside the band so a caller can
+        # never mistake "green" for "not alerting".
+        # NOW is served by a re-anchored real model lead in live mode, so the
+        # threshold must be looked up for THAT lead, not for the literal 0.
+        # Routed through _effective_threshold_for_lead so the instance-local
+        # GFS threshold override (leads 10-15, opt-in) applies here too.
+        _eff_lead = self._effective_lead_hours(lead_hours, mode)
+        _thr = self._effective_threshold_for_lead(_eff_lead)
+        _alert = bool(sp >= _thr)
+
         # 4. Physical analysis inputs at t=0. Only available for the historical
         # case study (denormalized at init); never borrowed from historical data
         # while serving a live query.
@@ -1463,10 +2083,14 @@ class NowcastService:
                 "pressure_hpa": float(round(float(self.era5_surface_t0["pres_hpa"][lat_idx, lon_idx]), 1)),
             }
 
-        # Dynamic Valid Time, anchored to the issue time of the SELECTED mode
+        # Dynamic Valid Time = analysis_t0 + the EFFECTIVE lead actually served.
+        # For NOW (lead 0) in live mode the effective lead is the re-anchored
+        # model lead, so the reported valid time matches the field returned
+        # rather than the analysis instant.
+        _eff_lead = self._effective_lead_hours(lead_hours, mode)
         clean = issue_time.replace("Z", "+00:00").replace(" ", "T")
         issue_dt = datetime.fromisoformat(clean)
-        valid_dt = issue_dt + timedelta(hours=lead_hours)
+        valid_dt = issue_dt + timedelta(hours=_eff_lead)
         valid_formatted = valid_dt.strftime("%d %b %Y %H:%M UTC")
 
         return {
@@ -1477,8 +2101,16 @@ class NowcastService:
             "district": district_name,
             "grid_cell": {"lat": round(cell_lat, 2), "lon": round(cell_lon, 2)},
             "lead_hours": lead_hours,
+            # The real model lead behind this value. Differs from `lead_hours`
+            # only for NOW in live mode, where it names the re-anchored lead.
+            "effective_model_lead_hours": int(_eff_lead),
             "issue_time_utc": issue_dt.strftime("%d %b %Y %H:%M UTC"),
             "forecast_valid_utc": valid_formatted,
+            "now_anchor": (
+                self.live_now_anchor
+                if (lead_hours == 0 and resolved_mode == "live") else None
+            ),
+            "demo_horizon": self.demo_horizon_info(lead_hours, mode),
             "model_name": "StormSense AI Forecast",
             "predictions": {
                 "thunderstorm_prob_pct": float(round(sp * 100, 1)),
@@ -1487,6 +2119,19 @@ class NowcastService:
                 "overall_risk_pct": float(round(ov * 100, 1)),
                 "risk_level": lvl,
                 "risk_label": lbl,
+                # The model's own detection decision for this cell, reported
+                # separately from the colour band. `risk_level` can read "green"
+                # while `alert_active` is true, because the display bands are
+                # fixed at 0.25/0.50/0.75 while the per-lead operating point is
+                # whatever validation fitted -- on GFS some of those land below
+                # 0.25. Consumers that care whether the model is detecting an
+                # event must read this, not the colour.
+                "alert_active": _alert,
+                "decision_threshold": float(round(_thr, 4)),
+                "threshold_lead_hours": int(_eff_lead),
+                "band_edges": [risk_thresholds.WATCH_MIN,
+                               risk_thresholds.ALERT_MIN,
+                               risk_thresholds.WARNING_MIN],
             },
             "observed_inputs": obs_inputs,
         }
@@ -1497,9 +2142,10 @@ class NowcastService:
         """Calculate real model-derived risk aggregated across districts."""
         pred = self._pred_for_mode(mode)
         issue_time = self._issue_time_for_mode(mode)
-        if lead_hours not in self.lead_times:
+        if not self._is_servable_lead(lead_hours, mode):
             lead_hours = self.lead_times[0]
-        li = self.lead_times.index(lead_hours)
+        li = self._lead_index(lead_hours, mode)
+        _eff_lead = self._effective_lead_hours(lead_hours, mode)
 
         prob_grid = pred["severe_weather_prob"][li]
         rain_grid = pred["rain_3h_mm_pred"][li]
@@ -1523,7 +2169,18 @@ class NowcastService:
             max_ov = float(np.max(ov_vals))
 
             lvl = self._level_for_prob(max_ov)
-            thr = float(self.predictor.threshold_per_lead.get(lead_hours, 0.5) if isinstance(self.predictor.threshold_per_lead, dict) else 0.5)
+            # BUG FIXED: this looked up the threshold by the RAW requested
+            # `lead_hours` (0/2/4/6 under the demo mapping), not by `_eff_lead`
+            # -- the real V4 lead the risk grids above are actually drawn from
+            # (via `li = self._lead_index(lead_hours, mode)`). For NOW
+            # (lead_hours=0) that key does not exist in threshold_per_lead at
+            # all, so it silently fell back to a flat 0.5 instead of the real
+            # per-lead calibrated threshold (0.559-0.650), which could disagree
+            # with the risk-map/point-inspection alert state for the SAME cell
+            # and SAME selected horizon -- the dashboard-vs-advisories mismatch.
+            # Also routed through _effective_threshold_for_lead so the
+            # instance-local GFS override (leads 10-15) applies here too.
+            thr = self._effective_threshold_for_lead(_eff_lead)
             alert = bool(max_p >= thr)
 
             # Contextual advisory text based on real metrics
@@ -1551,8 +2208,8 @@ class NowcastService:
                 "body": body,
                 "aggregation_method": "Maximum & 90th Percentile Cell Hazard (Civil Protection Standard)",
                 "issue_time": issue_time,
-                "valid_time": compute_valid_time(issue_time, lead_hours),
-                "valid_until": format_iso_time(compute_valid_time(issue_time, lead_hours)),
+                "valid_time": compute_valid_time(issue_time, _eff_lead),
+                "valid_until": format_iso_time(compute_valid_time(issue_time, _eff_lead)),
             })
 
         # Strictly risk-ordered: the monitored region is all of West Bengal, so the
@@ -1599,15 +2256,18 @@ class NowcastService:
         """Retrieve top high-probability grid cells from the real model output for the given horizon."""
         pred = self._pred_for_mode(mode)
         issue_time = self._issue_time_for_mode(mode)
-        if lead_hours not in self.lead_times:
+        if not self._is_servable_lead(lead_hours, mode):
             lead_hours = self.lead_times[0]
-        li = self.lead_times.index(lead_hours)
+        li = self._lead_index(lead_hours, mode)
 
+        _eff_lead = self._effective_lead_hours(lead_hours, mode)
         prob_grid = pred["severe_weather_prob"][li]
         rain_grid = pred["rain_3h_mm_pred"][li]
         ff_grid = pred["flash_flood_risk"][li]
         overall_grid = pred["overall_risk"][li]
-        thr = float(self.predictor.threshold_per_lead.get(lead_hours, 0.5) if isinstance(self.predictor.threshold_per_lead, dict) else 0.5)
+        # Same fix as get_district_advisories: look up the threshold by the
+        # EFFECTIVE lead the grids above were drawn from, not the raw request.
+        thr = self._effective_threshold_for_lead(_eff_lead)
 
         # Rank cells INSIDE WEST BENGAL only. The model grid spans 20-28N/84-90E
         # and also covers Odisha, Jharkhand, Bihar, Bangladesh and Nepal, so an
@@ -1631,7 +2291,7 @@ class NowcastService:
         cells_data.sort(key=lambda x: -x[0])
 
         top_cells = []
-        vt = compute_valid_time(issue_time, lead_hours)
+        vt = compute_valid_time(issue_time, _eff_lead)
         vt_fmt = format_iso_time(vt)
 
         for rank, (p, r, ff, ov, i, j, lat, lon) in enumerate(cells_data[:top_k], 1):
@@ -1683,17 +2343,14 @@ class NowcastService:
     ) -> Dict[str, Any]:
         """Atmospheric factor attribution for the selected mode/location/horizon.
 
-        METHOD (stated plainly, because it matters): this is RULE-BASED,
-        PHYSICS-INSPIRED attribution. Scores are computed by explicit formulas
-        over the atmospheric variables actually fed to the model and normalized
-        to relative contributions. It is NOT SHAP, NOT gradient/saliency-based,
-        and NOT neural-network feature importance -- no claim of either is made
-        anywhere in the response.
+        This is rule-based, physics-inspired attribution: scores are computed
+        by explicit formulas over the atmospheric variables actually fed to the
+        model, normalized to relative contributions. It is not SHAP, not
+        gradient/saliency-based, and not neural-network feature importance --
+        no such claim is made anywhere in the response.
 
-        The inputs are read from the REAL live input tensor at the requested
-        location (previously they were hardcoded placeholders -- humidity 85,
-        CAPE 1500, wind 15 -- which made live attribution entirely fictitious
-        and identical everywhere).
+        The inputs are read from the real live input tensor at the requested
+        location.
         """
         resolved = self._resolve_mode(mode)
         if resolved == "live":
@@ -1713,8 +2370,13 @@ class NowcastService:
             # Resolve the grid cell for the requested point (default: the
             # domain's highest-risk cell at this horizon, so the panel explains
             # the area the dashboard is actually warning about).
-            lh = lead_hours if lead_hours in self.lead_times else self.lead_times[0]
-            li = self.lead_times.index(lh)
+            lh = lead_hours if self._is_servable_lead(lead_hours, "live") else self.lead_times[0]
+            # Resolve through the SAME mapping every other endpoint uses, so the
+            # explanation is built from the identical model output the map and
+            # the cards are showing -- including the demo horizon mapping, where
+            # the label "+2h" is backed by the real V4 +6h forecast.
+            li = self._lead_index(lh, "live")
+            _eff_lh = self._effective_lead_hours(lh, "live")
             if lat is not None and lon is not None:
                 i = int(np.argmin(np.abs(self.lats - lat)))
                 j = int(np.argmin(np.abs(self.lons - lon)))
@@ -1744,10 +2406,31 @@ class NowcastService:
                 )
 
             s = self.live_surface_state  # real, denormalized t0 GFS analysis state
+
+            # HORIZON-SPECIFICITY.
+            #
+            # The thermodynamic fields above are the ANALYSIS state: one instant,
+            # shared by every lead. Attribution built from them alone is identical
+            # at +2h and +6h, which contradicts the contract that the explanation
+            # belongs to the SELECTED horizon.
+            #
+            # The model's own `rain_3h_mm` head is a genuine per-lead output, so
+            # the rainfall factor is taken from the forecast AT THIS LEAD rather
+            # than from analysis-time rain. That makes the attribution move with
+            # the horizon using a real model quantity -- not a reweighting
+            # invented to manufacture variation.
+            #
+            # The remaining factors stay analysis-based and are labelled as such
+            # in `factor_basis` below, because the model exposes no per-lead CAPE,
+            # humidity or wind head. Inventing per-lead values for them would be
+            # fabrication.
+            rain_fcst = float(self.live_pred["rain_3h_mm_pred"][li, i, j])
             xai_inputs = {
-                "rainfall_1h_mm": float(s["rain_mm_h"][i, j]),
-                "rainfall_3h_mm": float(s["rain_mm_h"][i, j]) * 3.0,
-                "rainfall_6h_mm": float(s["rain_mm_h"][i, j]) * 6.0,
+                # 3h accumulation predicted for this lead; the 1h/6h entries are
+                # the same quantity rescaled, matching the factor's formula.
+                "rainfall_1h_mm": rain_fcst / 3.0,
+                "rainfall_3h_mm": rain_fcst,
+                "rainfall_6h_mm": rain_fcst * 2.0,
                 "humidity_percent": float(s["rh_pct"][i, j]),
                 "dew_point_c": float(s["dewpoint_c"][i, j]),
                 "cape_jkg": float(s["cape_j_kg"][i, j]),
@@ -1760,11 +2443,28 @@ class NowcastService:
             out["mode"] = "live"
             out["location"] = loc_desc
             out["lead_hours"] = lh
+            # The real V4 lead the attribution was computed from. Differs from
+            # `lead_hours` whenever the demo horizon mapping is in force.
+            out["effective_model_lead_hours"] = int(_eff_lh)
+            out["demo_horizon"] = self.demo_horizon_info(lh, "live")
+            out["model_identity"] = self.model_identity()
             out["grid_cell"] = {"lat": round(float(self.lats[i]), 2), "lon": round(float(self.lons[j]), 2)}
             out["predicted_severe_prob_pct"] = round(
                 float(self.live_pred["severe_weather_prob"][li, i, j]) * 100.0, 1
             )
             out["input_analysis_time"] = self.live_analysis_time
+            out["predicted_rain_3h_mm"] = round(rain_fcst, 2)
+            # Exactly which quantity each factor was computed from, so a reader
+            # can tell what varies with the horizon and what does not.
+            out["factor_basis"] = {
+                "Recent Rainfall": (
+                    f"model rain_3h_mm head at the real V4 +{_eff_lh}h lead "
+                    f"(per-lead forecast; shown under the label for +{lh}h)"
+                ),
+                "Convective Instability (CAPE)": "GFS analysis state at t0 (same for all leads)",
+                "Moisture / Humidity": "GFS analysis state at t0 (same for all leads)",
+                "Wind Influence": "GFS analysis state at t0 (same for all leads)",
+            }
             out["method_disclosure"] = (
                 "Rule-based, physics-inspired attribution computed from the atmospheric "
                 "variables fed to the model. Not SHAP, not gradient-based, and not "
@@ -1852,9 +2552,70 @@ class NowcastService:
 
 
 def get_nowcast_service() -> NowcastService:
+    """The process-wide service singleton.
+
+    Normally binds the production checkpoint. Two environment variables allow an
+    OFFLINE evaluator (scripts/historical_backtest.py) to point the same
+    production code path at a CANDIDATE model instead, so a backtest measures
+    the real inference pipeline rather than a reimplementation of it:
+
+        STORMSENSE_CKPT    path to an alternative checkpoint
+        STORMSENSE_CONFIG  path to an alternative config (lead times must match
+                           the checkpoint's)
+
+    Both are unset in normal operation, so the served model is unchanged. They
+    are read here rather than passed as arguments because the backtest reaches
+    the service through module-level code it does not own.
+    """
     global _SERVICE_INSTANCE
     if _SERVICE_INSTANCE is None:
         with _SERVICE_LOCK:
             if _SERVICE_INSTANCE is None:
-                _SERVICE_INSTANCE = NowcastService()
+                ckpt = os.environ.get("STORMSENSE_CKPT") or None
+                cfg = os.environ.get("STORMSENSE_CONFIG") or None
+                if ckpt is None and cfg is None:
+                    ckpt, cfg = _default_active_model()
+                _SERVICE_INSTANCE = NowcastService(
+                    checkpoint_path=ckpt,
+                    config_path=cfg,
+                )
     return _SERVICE_INSTANCE
+
+
+# The active model. Changing these two constants changes which model the
+# whole application serves -- the lead set, parameter count, calibration and
+# UI model identity are all derived from whatever is loaded here.
+#
+# V4 (Data/outputs/checkpoints_v4/v2_best.pt) remains on disk and stays
+# reachable via STORMSENSE_CKPT/STORMSENSE_CONFIG for backtests and
+# comparisons.
+ACTIVE_MODEL_CHECKPOINT = os.path.join(
+    PROJECT_ROOT, "Data", "outputs", "checkpoints", "v2_calibrated_best.pt")
+ACTIVE_MODEL_CONFIG = None  # configs/default.yaml
+
+FALLBACK_MODEL_CHECKPOINT = os.path.join(
+    PROJECT_ROOT, "Data", "outputs", "checkpoints", "v2_calibrated_best.pt")
+FALLBACK_MODEL_CONFIG = None  # configs/default.yaml
+
+
+def _default_active_model() -> tuple:
+    """(checkpoint, config) for the active model, or the fallback.
+
+    `ACTIVE_MODEL_CONFIG` may legitimately be None (V2 uses the default
+    configs/default.yaml, resolved by NowcastService.__init__ itself when
+    config_path is None) -- so only the checkpoint path is existence-checked,
+    never the config path, which would raise on None.
+
+    Falls back rather than raising so a deployment missing the active
+    checkpoint still serves forecasts -- degraded to the fallback model's own
+    lead set, which the API and UI then report accurately because both derive
+    the lead set from the checkpoint.
+    """
+    if os.path.exists(ACTIVE_MODEL_CHECKPOINT):
+        return ACTIVE_MODEL_CHECKPOINT, ACTIVE_MODEL_CONFIG
+    print(
+        "[NowcastService] WARNING: active model checkpoint not found at "
+        f"{ACTIVE_MODEL_CHECKPOINT}; falling back to {FALLBACK_MODEL_CHECKPOINT}."
+    )
+    return (FALLBACK_MODEL_CHECKPOINT if os.path.exists(FALLBACK_MODEL_CHECKPOINT)
+            else None), FALLBACK_MODEL_CONFIG

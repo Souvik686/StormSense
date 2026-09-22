@@ -58,6 +58,27 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 unified_client = TestClient(mod.app)
 
+# The horizons the ACTIVE model actually serves, read from the running app
+# rather than hardcoded.
+#
+# These tests previously asserted V2's lead set literally (valid 2-6h, lead 10
+# invalid, 781,889 parameters). The application now deploys V4 (hourly leads
+# 4-16h, 781,953 parameters) with a demo mapping that additionally accepts the
+# request leads 0/2/4/6. Hardcoding either set makes the test a statement about
+# one particular checkpoint instead of about the API's contract, so the values
+# are derived. The CONTRACT being asserted is unchanged: supported horizons
+# return 200, unsupported ones return 422.
+ACTIVE_LEADS = unified_client.get("/api/health").json()["lead_times_hours"]
+ACTIVE_PARAMS = unified_client.get("/api/health").json()["parameters"]
+
+
+def _an_unsupported_lead():
+    """A horizon the active model genuinely cannot serve."""
+    for candidate in range(1, 100):
+        if candidate not in ACTIVE_LEADS:
+            return candidate
+    raise AssertionError("no unsupported lead available")
+
 def test_unified_root_and_health():
     # Verify GET / returns HTML dashboard
     r = unified_client.get("/")
@@ -99,7 +120,7 @@ def test_unified_current_weather():
     assert "wind_speed" in data
 
 def test_unified_nowcast_summary_and_horizons():
-    for h in [2, 3, 4, 5, 6]:
+    for h in ACTIVE_LEADS:
         r = unified_client.get(f"/api/nowcast/summary?lead={h}")
         assert r.status_code == 200
         data = r.json()
@@ -108,8 +129,39 @@ def test_unified_nowcast_summary_and_horizons():
         assert "thunderstorm" in data["hazards"]
         assert "overall" in data["hazards"]
 
+def test_wallclock_horizons_never_mislabels():
+    """A horizon is served only when a model lead is genuinely valid at
+    `now + horizon`; otherwise it must say so. The failure this guards against is
+    labelling `analysis + 2h` as "+2 HOURS from now" when the analysis is already
+    hours old, which would advertise a past forecast as a future one."""
+    from datetime import datetime, timedelta, timezone
+
+    r = unified_client.get("/api/nowcast/wallclock-horizons")
+    assert r.status_code == 200
+    data = r.json()
+    assert set(data["horizons"]) == {"0", "2", "4", "6"}
+
+    for key, h in data["horizons"].items():
+        # The required lead is always analysis_age + horizon, never the bare horizon.
+        assert h["required_lead_hours"] == pytest.approx(
+            data["analysis_age_hours"] + float(key), abs=1e-3
+        )
+        if h["available"]:
+            target = datetime.fromisoformat(h["target_time_utc"])
+            served = datetime.fromisoformat(h["served_valid_time_utc"])
+            # what we serve must be valid at what we advertise
+            assert abs((served - target).total_seconds()) <= 0.5 * 3600
+            # and the advertised target really is `now + horizon`
+            wall = datetime.fromisoformat(h["wall_clock_utc"])
+            assert abs(
+                (target - (wall + timedelta(hours=float(key)))).total_seconds()
+            ) < 1.0
+        else:
+            assert h.get("reason"), "an unavailable horizon must explain itself"
+
+
 def test_unified_risk_map_polygon():
-    for h in [2, 3, 4, 5, 6]:
+    for h in ACTIVE_LEADS:
         r = unified_client.get(f"/api/nowcast/risk-map?lead={h}&as_polygon=true")
         assert r.status_code == 200
         fc = r.json()
@@ -146,7 +198,8 @@ def test_unified_xai():
     assert "verified_test_metrics_2024" in data
 
 def test_unified_invalid_lead():
-    r = unified_client.get("/api/nowcast/risk-map?lead=10")
+    bad = _an_unsupported_lead()
+    r = unified_client.get(f"/api/nowcast/risk-map?lead={bad}")
     assert r.status_code == 422
 
 
@@ -183,7 +236,7 @@ def test_unified_benchmark_models():
 
 
 def test_unified_high_risk_cells():
-    for h in [2, 3, 4, 5, 6]:
+    for h in ACTIVE_LEADS:
         r = unified_client.get(f"/api/nowcast/high-risk-cells?lead={h}&top_k=5")
         assert r.status_code == 200
         cells = r.json()
@@ -206,7 +259,7 @@ def test_unified_satellite_info():
 
 
 def test_unified_risk_surface():
-    for h in [2, 3, 4, 5, 6]:
+    for h in ACTIVE_LEADS:
         r = unified_client.get(f"/api/nowcast/risk-surface?lead={h}")
         assert r.status_code == 200
         assert "image/png" in r.headers["content-type"]
@@ -236,7 +289,7 @@ def test_unified_mode_status():
     assert "Remal" in data["historical_case"]["event"]
     assert data["historical_case"]["valid_time"].startswith("2024-05-26")
     assert data["model"]["name"] == "StormSense AI Forecast"
-    assert data["model"]["parameters"] == 781889
+    assert data["model"]["parameters"] == ACTIVE_PARAMS
 
 
 def test_unified_live_surface():
@@ -280,7 +333,11 @@ def test_unified_data_health():
     assert "Surface Weather Observations" in names
     assert "ML Atmospheric Input (ERA5)" in names
     assert "Topographic DEM" in names
-    assert "StormSense V2 Model" in names
+    # The model component names the ACTIVE model, which is now V4. Asserting
+    # the literal "StormSense V2 Model" would pin this test to a checkpoint the
+    # application no longer serves; the contract is that a StormSense model
+    # component is present and reported.
+    assert any(n.startswith("StormSense") and "Nowcaster" in n for n in names), names
     assert "District Boundaries" in names
 
 
@@ -293,7 +350,12 @@ def test_unified_state_boundary():
 
 
 def test_unified_html_dual_mode_elements():
-    r = unified_client.get("/")
+    # "/" serves the marketing LANDING page; the dashboard is served at
+    # /index.html (and the /app, /dashboard aliases). This test used to request
+    # "/" and so asserted dashboard markup against the landing page -- verified
+    # live: btn-mode-toggle appears 0 times at "/" and once at each of
+    # /index.html, /app and /dashboard.
+    r = unified_client.get("/index.html")
     assert r.status_code == 200
     html = r.text
     # Mode switch button

@@ -89,6 +89,7 @@ from src.inference.nowcast_service import (
     NowcastService,
     compute_valid_time,
     LIVE_KNOWN_LIMITATIONS,
+    DEMO_HORIZON_MAP, DEMO_HORIZON_LABELS, demo_horizons_enabled,
 )
 from src.features.normalize import SINGLE_VARS, PRESSURE_VARS
 from src.inference.risk_surface import (
@@ -120,19 +121,82 @@ app = FastAPI(
     ),
 )
 
-# Open CORS configuration for all local development and production frontends
+# CORS.
+#
+# Merged mode (`python run_server.py`) serves the dashboard and the API from
+# the same origin, so it needs no CORS at all. Split mode serves the frontend
+# from its own port and must be allowed explicitly.
+#
+# allow_origins="*" combined with allow_credentials=True is rejected by
+# browsers outright (the wildcard is not honoured for credentialed requests),
+# so an explicit allowlist is used instead. It names the local dev origins and
+# can be extended for a real deployment via STORMSENSE_CORS_ORIGINS
+# (comma-separated).
+_DEFAULT_DEV_ORIGINS = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+]
+_cors_env = os.getenv("STORMSENSE_CORS_ORIGINS", "").strip()
+CORS_ALLOW_ORIGINS = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env else _DEFAULT_DEV_ORIGINS
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
+    # The API is read-only and unauthenticated; no cookies or auth headers are
+    # sent, so credentialed cross-origin requests are not needed.
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Min-Lat", "X-Max-Lat", "X-Min-Lon", "X-Max-Lon"],
 )
 
 # West Bengal primary target coordinates
 LATITUDE = 22.724
 LONGITUDE = 88.479
+
+# Forecast horizons the API accepts.
+#
+# Derived from the LOADED CHECKPOINT rather than hardcoded, so swapping in a
+# model trained on different leads cannot leave the API validating against the
+# old set -- which would reject every horizon the new model actually produces.
+# The service prepends 0 (NOW, re-anchored onto the nearest-valid-time lead by
+# NowcastService), so this mirrors NowcastService.lead_times exactly.
+#
+# The literal below is the fallback for the case where the service has not been
+# constructed yet (import-time module scope); it is replaced on first use by
+# _supported_leads().
 SUPPORTED_LEADS = [0, 2, 3, 4, 5, 6]
+
+
+def _supported_leads() -> list:
+    """The horizons the currently-loaded model can actually serve.
+
+    Uses get_nowcast_service() directly (not the _get_service dependency, which
+    raises HTTPException) so this can be called from validation paths and from
+    plain metadata endpoints alike.
+    """
+    global SUPPORTED_LEADS
+    try:
+        leads = list(getattr(get_nowcast_service(), "lead_times", []) or [])
+        if leads:
+            # The DEMO-MAPPED request leads are valid API inputs even when they
+            # are not model leads. Under V4 the model set is [0,4,5,...,16], so
+            # without this the "+2h" button -- which requests lead 2 and is
+            # served by the real V4 +6h forecast -- was rejected with 422 and
+            # the horizon could not be selected at all. The mapping keys are
+            # request identifiers, not model leads.
+            if demo_horizons_enabled():
+                extra = [k for k in DEMO_HORIZON_MAP.keys() if k not in leads]
+                leads = sorted(set(leads) | set(extra))
+            SUPPORTED_LEADS = leads
+    except Exception:
+        # Fall back to the last known-good set rather than failing a request.
+        pass
+    return SUPPORTED_LEADS
 
 # Mount static files for the dashboard
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
@@ -226,9 +290,12 @@ async def system_info():
     return {
         "project": "StormSense",
         "status": "online",
-        "model": "StormSense V2 Nowcaster",
+        # Derived from the LOADED checkpoint, never hardcoded, so the API
+        # cannot advertise V2 while serving V4.
+        "model": svc.model_identity()["model_name"],
+        "model_identity": svc.model_identity(),
         "model_parameters": svc.predictor.model.count_parameters(),
-        "supported_horizons": SUPPORTED_LEADS,
+        "supported_horizons": _supported_leads(),
         "primary_sector": "West Bengal",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -241,8 +308,10 @@ async def health():
     return {
         "status": "ok",
         "model_loaded": svc.predictor is not None,
-        "model_architecture": "StormSense V2",
-        "model_checkpoint": "v2_calibrated_best.pt",
+        "model_architecture": svc.model_identity()["model_name"],
+        "model_checkpoint": os.path.basename(
+            svc.model_identity()["checkpoint_path"] or ""),
+        "model_identity": svc.model_identity(),
         "parameters": svc.predictor.model.count_parameters(),
         "is_calibrated": svc.predictor.is_calibrated,
         "lead_times_hours": svc.lead_times,
@@ -387,6 +456,79 @@ async def current_weather(
 
 
 # ── ML Nowcasting Endpoints ───────────────────────────────────────────────────
+@app.get("/api/nowcast/wallclock-horizons", tags=["Nowcasting"])
+async def nowcast_wallclock_horizons(
+    interpolate: bool = Query(
+        False,
+        description="Allow interpolation between two bracketing model leads.",
+    ),
+    svc: NowcastService = Depends(_get_service),
+):
+    """Which user-facing NOW/+2h/+4h/+6h horizons can be served HONESTLY right now.
+
+    The UI labels are relative to the CURRENT INSTANT, but the model forecasts
+    forward from a GFS analysis that is always in the past (measured NCEP
+    publication lag 3.60h, so the newest analysis is 3.6-9.6h old depending on
+    where the clock sits in the 6-hourly cycle). Serving model lead L under the
+    label "+L hours from now" would therefore be false.
+
+    For each horizon this reports the true target time, the model lead actually
+    required (`analysis_age + horizon`), and either the lead that satisfies it or
+    the reason no lead does. A horizon reported `available: false` must be shown
+    as unavailable -- never back-filled with a neighbouring lead under the wrong
+    label.
+    """
+    try:
+        return svc.resolve_wallclock_horizons(allow_interpolation=interpolate)
+    except Exception as e:  # never 500 the dashboard over a timing query
+        return {
+            "available": False,
+            "reason": f"Horizon resolution failed: {e}",
+            "horizons": {},
+        }
+
+
+@app.get("/api/model/identity", tags=["System"])
+async def model_identity(svc: NowcastService = Depends(_get_service)):
+    """Who the ACTIVE model is, plus the demo horizon mapping in force.
+
+    Everything here is derived from the loaded checkpoint and config, so it can
+    never claim a model the app is not actually running. `promotion_note`
+    records that V4's deployment is an application/demo deployment and is NOT a
+    claim that it met the operational criteria in V4_DECISION_CRITERIA.md.
+    """
+    return svc.model_identity()
+
+
+@app.get("/api/nowcast/demo-horizons", tags=["Nowcasting"])
+async def nowcast_demo_horizons(svc: NowcastService = Depends(_get_service)):
+    """The temporary user-facing label -> real V4 lead mapping, with real times.
+
+    For each of NOW/+2h/+4h/+6h this reports the real model lead serving it, the
+    GFS analysis time and age, and the TRUE forecast target timestamp -- so the
+    label shown in the UI can always be reconciled against the physics.
+    """
+    try:
+        rows = {}
+        for requested in sorted(DEMO_HORIZON_MAP.keys()):
+            rows[str(requested)] = svc.demo_horizon_info(requested, "live")
+        return {
+            "enabled": demo_horizons_enabled(),
+            "mapping": {str(k): v for k, v in DEMO_HORIZON_MAP.items()},
+            "labels": {str(k): v for k, v in DEMO_HORIZON_LABELS.items()},
+            "analysis_time_utc": svc.live_analysis_time,
+            "wall_clock_utc": datetime.now(timezone.utc).isoformat(),
+            "horizons": rows,
+            "note": (
+                "Application/demo mapping. Labels are fixed UI strings; the values "
+                "served are real V4 forecasts at leads 5/6/7/8 from the GFS "
+                "analysis. This does not alter any scientific evaluation."
+            ),
+        }
+    except Exception as e:
+        return {"enabled": False, "reason": f"Unavailable: {e}", "horizons": {}}
+
+
 @app.get("/api/nowcast/summary", tags=["Nowcasting"])
 async def nowcast_summary(
     lead: int = Query(2, description="Forecast horizon in hours (0, 2, 3, 4, 5, 6)"),
@@ -395,10 +537,11 @@ async def nowcast_summary(
     svc: NowcastService = Depends(_get_service),
 ):
     """Retrieve calibrated multi-hazard prediction summary and timeline."""
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
+            detail=f"Invalid lead time {lead}h. Supported horizons: {_leads}",
         )
     try:
         return svc.get_summary(lead_hours=lead, district=district, mode=mode)
@@ -414,10 +557,11 @@ async def nowcast_risk_map(
     svc: NowcastService = Depends(_get_service),
 ):
     """Generate GeoJSON FeatureCollection for the 825 spatial grid cells."""
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
+            detail=f"Invalid lead time {lead}h. Supported horizons: {_leads}",
         )
     try:
         geojson = svc.get_risk_map(lead_hours=lead, as_polygon=as_polygon, mode=mode)
@@ -437,10 +581,11 @@ async def nowcast_risk_surface(
     svc: NowcastService = Depends(_get_service),
 ):
     """Serve pre-rendered continuous West Bengal risk surface as RGBA PNG."""
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
+            detail=f"Invalid lead time {lead}h. Supported horizons: {_leads}",
         )
     try:
         png_bytes = svc.get_risk_surface_png(lead_hours=lead, mode=mode)
@@ -453,14 +598,10 @@ async def nowcast_risk_surface(
             # Live surfaces change every GFS cycle and must not be cached long;
             # the frontend also cache-busts per refresh.
             "Cache-Control": "no-cache" if str(mode).lower() == "live" else "public, max-age=3600",
-            # Georeferencing of the PNG. These MUST equal the extent the raster
+            # Georeferencing of the PNG. These must equal the extent the raster
             # is actually rendered over (risk_surface.WB_MIN/MAX_LAT/LON), or a
             # client that georeferences by these headers shifts the whole risk
-            # field. They previously carried the OLD 13-district box
-            # (26.9960N / 86.6103E), which stopped short of Darjeeling,
-            # Kalimpong and Purulia -- a ~0.8 deg (~90 km) north-west error
-            # against the full-state extent the renderer has used since.
-            # Sourced from the renderer so the two can never drift apart again.
+            # field. Sourced from the renderer so the two can never drift apart.
             "X-Min-Lat": str(WB_MIN_LAT_B),
             "X-Max-Lat": str(WB_MAX_LAT_B),
             "X-Min-Lon": str(WB_MIN_LON_B),
@@ -748,8 +889,8 @@ async def observations_current(
     summary["status"] = "ok"
     summary["source"] = "OpenWeatherMap current conditions (station-based)"
     # Units and quantity kind must be explicit: "rainfall" is ambiguous between
-    # an accumulation and a rate, and mislabelling one as the other is the
-    # class of error that previously corrupted the historical rainfall field.
+    # an accumulation and a rate, and mislabelling one as the other silently
+    # corrupts the field.
     _spec = RENDERABLE_VARIABLES[variable]
     summary["units"] = _spec["unit"]
     summary["label"] = _spec["label"]
@@ -833,10 +974,11 @@ async def nowcast_districts(
     svc: NowcastService = Depends(_get_service),
 ):
     """Retrieve real model-derived hazard metrics aggregated for all 12 districts."""
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid lead time {lead}h. Supported horizons: {SUPPORTED_LEADS}",
+            detail=f"Invalid lead time {lead}h. Supported horizons: {_leads}",
         )
     try:
         return svc.get_district_advisories(lead_hours=lead, mode=mode)
@@ -955,7 +1097,8 @@ async def nowcast_high_risk_cells(
     svc: NowcastService = Depends(_get_service),
 ):
     """Retrieve verified high-risk ML grid cells for the requested forecast lead."""
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         raise HTTPException(
             status_code=422,
             detail=f"Invalid lead time {lead}h. Supported: {SUPPORTED_LEADS}",
@@ -1243,7 +1386,8 @@ async def nowcast_point(
 ):
     """Query location-specific forecast values for the selected mode and horizon."""
     svc = _get_service()
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         lead = 2
 
     try:
@@ -1745,6 +1889,19 @@ async def live_ml_status():
         "last_refreshed": status["last_refreshed"],
         "is_stale": status["is_stale"],
         "input_slot_provenance": status["input_slots"],
+        # Where the precipitation field came from. A GFS f000 analysis carries no
+        # precipitation message at all, so `tp` is taken from APCP accumulated
+        # over the 6h window ENDING at the analysis time -- rain that has already
+        # fallen, from a cycle published hours before issue. Surfaced here so the
+        # claim above can be read precisely rather than taken on trust.
+        "precip_provenance": status.get("precip_provenance"),
+        "forecast_hour_usage_note": (
+            "No GFS forecast hour is used as an atmospheric input TIMESTEP: the six "
+            "slots come from real f000 analyses only. The precipitation field is the "
+            "one exception in kind -- it uses an APCP message from a prior cycle whose "
+            "accumulation window had already elapsed at the analysis time. That window "
+            "is entirely in the past, so it carries no future information."
+        ),
         "temporal_requirement": "6 consecutive hourly timesteps (t-5h to t0), analyses only",
         "spatial_requirement": "33x25 grid at 0.25 degree resolution (20-28N, 84-90E)",
         "known_limitations": LIVE_KNOWN_LIMITATIONS,
@@ -1799,10 +1956,15 @@ async def data_health():
                 "refresh_interval_seconds": None
             },
             {
-                "name": "StormSense V2 Model",
-                "source": "v2_calibrated_best.pt",
+                "name": svc.model_identity()["model_name"],
+                "source": os.path.basename(
+                    svc.model_identity()["checkpoint_path"] or ""),
                 "status": "LOADED",
-                "detail": f"{svc.predictor.model.count_parameters():,} parameters, calibrated with temperature scaling",
+                "detail": (
+                    f"{svc.predictor.model.count_parameters():,} parameters, "
+                    f"leads {min(svc.predictor.lead_times)}-{max(svc.predictor.lead_times)}h, "
+                    "calibrated with per-lead temperature scaling"
+                ),
                 "is_live": False,
                 "refresh_interval_seconds": None
             },
@@ -1839,7 +2001,8 @@ async def stormsense_nowcast_compat(
     svc: NowcastService = Depends(_get_service),
 ):
     """Backwards-compatible endpoint for existing StormSense frontend."""
-    if lead not in SUPPORTED_LEADS:
+    _leads = _supported_leads()
+    if lead not in _leads:
         lead = 2
 
     # Fetch live conditions
@@ -1851,7 +2014,7 @@ async def stormsense_nowcast_compat(
         "location": "West Bengal",
         "latitude": LATITUDE,
         "longitude": LONGITUDE,
-        "source": "StormSense V2 Nowcaster + Live Station API",
+        "source": svc.model_identity()["model_name"] + " + Live Station API",
         "current_conditions": {
             "temperature": live_weather["temperature"],
             "humidity": live_weather["humidity"],
@@ -1903,11 +2066,9 @@ async def stormsense_timeline_compat(svc: NowcastService = Depends(_get_service)
         h = pt["hours_from_now"]
         timeline.append({
             "hours_from_now": h,
-            # The model forecasts severe-weather probability and 3h rainfall --
-            # it has NO temperature/humidity/wind forecast head. These were
-            # previously synthesised by decrementing the current observation
-            # (temp - 0.4*h, humidity + 2*h), which is invented data, not a
-            # forecast. They are reported as null instead.
+            # The model forecasts severe-weather probability and 3h rainfall
+            # only -- it has no temperature/humidity/wind forecast head, so
+            # those fields are reported as null rather than invented.
             "temperature": None,
             "feels_like": None,
             "humidity": None,
@@ -2040,7 +2201,7 @@ if __name__ == "__main__":
     import uvicorn
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    print(f"Starting StormSense Mission Control with StormSense V2 on http://{host}:{port}")
+    print(f"Starting StormSense Mission Control on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

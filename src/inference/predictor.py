@@ -73,6 +73,10 @@ class NowcastPredictor:
 
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        # Retained so the API can report which checkpoint is actually serving,
+        # rather than a hardcoded model name that can drift from reality.
+        self.checkpoint_path = checkpoint_path
+        self.config_path = config_path
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         self.is_v2 = "wind_enc.level_weight" in ckpt["model"]
 
