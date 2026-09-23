@@ -103,11 +103,11 @@ StormSense
 
 ## Step 1 : Clone the Repository
 
-`bash
+```bash
 git clone https://github.com/Souvik686/StormSense.git
 cd StormSense
 git lfs pull
-`
+```
 
 ---
 
