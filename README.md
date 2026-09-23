@@ -113,28 +113,28 @@ git lfs pull
 
 ## Step 2 : Setup Virtual Environment
 
-`ash
+```bash
 python -m venv venv
 venv\Scripts\activate              # Windows
 # source venv/bin/activate         # macOS/Linux
-`
+```
 
 ---
 
 ## Step 3 : Install Dependencies
 
-`bash
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
-`
+```
 
 ---
 
 ## Step 4 : Configure Environment
 
-`bash
+```bash
 cp .env.example .env
-`
+```
 Edit .env and fill in:
 - OPENWEATHER_API_KEY
 - GOOGLE_MAPS_API_KEY *(Secure this in Google Cloud Console via HTTP referrers!)*
@@ -143,9 +143,9 @@ Edit .env and fill in:
 
 ## Step 5 : Run the Server
 
-`bash
+```bash
 python run_server.py
-`
+```
 
 ---
 
@@ -161,9 +161,9 @@ python run_server.py
 
 To run the unit and integration tests:
 
-`bash
+```bash
 pytest tests/ -q
-`
+```
 *(Browser tests require Chromium: playwright install chromium)*
 
 ---
