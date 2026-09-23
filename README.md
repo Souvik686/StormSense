@@ -57,7 +57,7 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 
 # 📂 Project Structure
 
-`
+
 StormSense
 ├── backend              # FastAPI app, OpenWeather client, config
 ├── configs              # default.yaml (production V2) + candidates
@@ -85,7 +85,7 @@ StormSense
 ├── run_backend.py
 ├── run_frontend.py
 └── run_server.py
-`
+
 
 ---
 
@@ -103,7 +103,7 @@ StormSense
 
 ## Step 1 : Clone the Repository
 
-`ash
+`bash
 git clone https://github.com/Souvik686/StormSense.git
 cd StormSense
 git lfs pull
@@ -123,7 +123,7 @@ venv\Scripts\activate              # Windows
 
 ## Step 3 : Install Dependencies
 
-`ash
+`bash
 pip install --upgrade pip
 pip install -r requirements.txt
 `
@@ -132,7 +132,7 @@ pip install -r requirements.txt
 
 ## Step 4 : Configure Environment
 
-`ash
+`bash
 cp .env.example .env
 `
 Edit .env and fill in:
@@ -143,7 +143,7 @@ Edit .env and fill in:
 
 ## Step 5 : Run the Server
 
-`ash
+`bash
 python run_server.py
 `
 
@@ -161,7 +161,7 @@ python run_server.py
 
 To run the unit and integration tests:
 
-`ash
+`bash
 pytest tests/ -q
 `
 *(Browser tests require Chromium: playwright install chromium)*
