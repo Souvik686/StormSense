@@ -384,8 +384,8 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <span class="material-symbols-outlined text-sm">download</span>
 <span class="">Export Report</span>
 </button>
-<button class="btn-siren-trigger flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-all shadow-lg shadow-red-600/25 cursor-pointer" id="btn-broadcast-siren-top">
-<span class="material-symbols-outlined text-sm">emergency_share</span>
+<button class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all shadow-lg shadow-amber-600/25 cursor-pointer" id="btn-broadcast-advisory-top" onclick="window.openAdvisoryModal()">
+<span class="material-symbols-outlined text-sm">campaign</span>
 <span class="">Broadcast Advisory</span>
 </button></div>
 <!-- Historical Case Study switch: the ONE copy of this control, placed LAST in
@@ -860,7 +860,7 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <div class="text-xs text-slate-300 font-mono">
                 Method: <strong class="text-cyan-400" id="xai-source">Physics-based rules (not learned attribution)</strong>
 </div>
-<button class="btn-siren-trigger px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5">
+<button class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5" onclick="window.openOperationalActionModal()">
 <span class="material-symbols-outlined text-sm">send</span>
 <span class="">Operational Action: Disseminate Cell Alerts</span>
 </button>
@@ -1620,28 +1620,120 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 <div class="flex items-center justify-between border-b border-slate-800 pb-3">
 <div class="flex items-center gap-2 text-red-400">
 <span class="material-symbols-outlined text-2xl">warning</span>
-<h3 class="text-lg font-extrabold tracking-tight text-white">CIVIL EMERGENCY ADVISORY DISPATCH (SIMULATION)</h3>
+<h3 class="text-lg font-extrabold tracking-tight text-white">IN-APP SIREN BROADCAST</h3>
 </div>
 <button class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" onclick="window.closeSirenModal()">
 <span class="material-symbols-outlined text-base">close</span>
 </button>
 </div>
 <div class="p-3.5 rounded-xl bg-red-500/10 border border-red-500/40 text-xs text-red-200 leading-relaxed">
-<strong>SIMULATION DIRECTIVE:</strong> You are authorizing the dispatch of a simulated Severe Convective Weather Warning Advisory across West Bengal disaster management channels based on AI forecast outputs.
+<strong>REAL, SCOPED ACTION:</strong> Sends a full-screen alert with sound to every visitor currently viewing this dashboard who is inside the model's current high-risk zone. Use this only for immediate, severe risk.
 </div>
 <div class="flex flex-col gap-2 text-xs font-mono bg-slate-950 p-3 rounded-xl border border-slate-800 text-slate-300">
-<div>PROTOCOL: <span class="text-red-400 font-bold">STAGE-4 ADVISORY SIMULATION</span></div>
-<div>CHANNELS: <span class="text-white">CAP XML Broadcast + Emergency SMS Gateway (Simulated)</span></div>
-<div>AUTHORITY: <span class="text-white">Autonomous Risk Engine</span></div>
+<div>REACH: <span class="text-white">Connected dashboard viewers only, filtered by their own location</span></div>
+<div>CHANNEL: <span class="text-white">In-app overlay + sound + browser notification</span></div>
+<div>NOT INCLUDED: <span class="text-amber-300">No SMS, no physical siren, no government alerting system</span></div>
 </div>
 <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
 <button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeSirenModal()">
 Cancel
 </button>
 <button class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-lg shadow-red-600/40 flex items-center gap-2" onclick="window.executeSirenDispatch()">
-<span class="material-symbols-outlined text-sm">emergency_share</span> Dispatch Warning Advisory
+<span class="material-symbols-outlined text-sm">emergency_share</span> Broadcast Siren Now
 </button>
 </div>
+</div>
+</div>
+
+<!-- Broadcast Advisory: an informational bulletin, not an interrupt. Posts to
+     a persistent, readable log any visitor can see -- distinct in KIND from
+     the siren above, not just severity. -->
+<div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hidden" id="modal-advisory">
+<div class="bg-slate-900 border-2 border-amber-500/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative text-slate-100 flex flex-col gap-4">
+<div class="flex items-center justify-between border-b border-slate-800 pb-3">
+<div class="flex items-center gap-2 text-amber-400">
+<span class="material-symbols-outlined text-2xl">campaign</span>
+<h3 class="text-lg font-extrabold tracking-tight text-white">BROADCAST ADVISORY</h3>
+</div>
+<button class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" onclick="window.closeAdvisoryModal()">
+<span class="material-symbols-outlined text-base">close</span>
+</button>
+</div>
+<div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-amber-200 leading-relaxed">
+<strong>INFORMATIONAL, NOT AN ALERT:</strong> Publishes a written bulletin to a standing advisory log visible to anyone on the dashboard, now or later. No sound, no full-screen interrupt.
+</div>
+<div class="flex flex-col gap-1.5">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Message</label>
+<textarea id="advisory-message-input" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white resize-none focus:outline-none focus:border-amber-500" placeholder="e.g. Conditions are being monitored across South 24 Parganas. No action required at this time."></textarea>
+</div>
+<div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+<button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeAdvisoryModal()">
+Cancel
+</button>
+<button class="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-lg shadow-amber-600/40 flex items-center gap-2" onclick="window.executeAdvisoryPost()">
+<span class="material-symbols-outlined text-sm">campaign</span> Publish Advisory
+</button>
+</div>
+</div>
+</div>
+
+<!-- Operational Action: Disseminate Cell Alerts. Honest about what this is --
+     Cell Broadcast needs telecom/government access this app does not have.
+     This logs the operator's request/decision rather than pretending to send
+     anything to a phone. -->
+<div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 hidden" id="modal-operational-action">
+<div class="bg-slate-900 border-2 border-slate-600 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative text-slate-100 flex flex-col gap-4">
+<div class="flex items-center justify-between border-b border-slate-800 pb-3">
+<div class="flex items-center gap-2 text-slate-300">
+<span class="material-symbols-outlined text-2xl">send</span>
+<h3 class="text-lg font-extrabold tracking-tight text-white">DISSEMINATE CELL ALERTS</h3>
+</div>
+<button class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800" onclick="window.closeOperationalActionModal()">
+<span class="material-symbols-outlined text-base">close</span>
+</button>
+</div>
+<div class="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700 text-xs text-slate-200 leading-relaxed">
+<strong>NOT AVAILABLE FROM THIS APP:</strong> Cell Broadcast (reaching every phone in an area, no app needed) requires telecom-operator and government alerting-authority access that this project does not have. No message will be sent to any phone.
+</div>
+<div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed">
+This records your request as a timestamped, auditable log entry -- for handoff to an actual disaster-management authority, or to a real dissemination channel if one is added later.
+</div>
+<div class="flex flex-col gap-1.5">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Note (optional)</label>
+<textarea id="operational-action-message-input" rows="2" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white resize-none focus:outline-none focus:border-slate-500" placeholder="e.g. Recommend cell broadcast for coastal blocks of Purba Medinipur."></textarea>
+</div>
+<div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+<button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeOperationalActionModal()">
+Cancel
+</button>
+<button class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold shadow-lg flex items-center gap-2" onclick="window.executeOperationalAction()">
+<span class="material-symbols-outlined text-sm">send</span> Log Request
+</button>
+</div>
+</div>
+</div>
+<!-- Incoming siren broadcast: shown to every viewer with this page open when an
+     operator dispatches an alert. Covers the screen deliberately -- this is the
+     one thing on the dashboard that must not be missed or mistaken for a
+     passive status change. -->
+<div class="fixed inset-0 z-[100] bg-red-950/95 backdrop-blur-sm flex-col items-center justify-center p-6 hidden" id="siren-alert-overlay">
+<div class="absolute inset-0 animate-pulse bg-red-600/20 pointer-events-none"></div>
+<div class="relative max-w-xl w-full text-center flex flex-col items-center gap-5">
+<span class="material-symbols-outlined text-red-300 text-7xl animate-pulse">emergency_home</span>
+<h2 class="text-3xl sm:text-4xl font-black tracking-tight text-white" id="siren-alert-heading">SEVERE WEATHER ALERT</h2>
+<p class="text-base text-red-100 font-semibold" id="siren-alert-message">A severe weather advisory has been issued.</p>
+<div class="font-mono text-xs text-red-200/90 flex flex-col gap-1">
+<div id="siren-alert-district"></div>
+<div id="siren-alert-time"></div>
+<div id="siren-alert-why" class="text-red-200/70"></div>
+</div>
+<div class="text-[11px] text-red-200/70 border border-red-400/30 rounded-lg px-3 py-2 leading-relaxed max-w-md">
+In-app advisory broadcast from this dashboard's operator. Not an official
+government alert and not issued by IMD or any disaster-management authority.
+</div>
+<button class="mt-1 px-6 py-2.5 rounded-xl bg-white text-red-700 text-sm font-bold hover:bg-red-50 transition-all" onclick="window.dismissSirenAlert()">
+Acknowledge
+</button>
 </div>
 </div>
 <!-- Interactive Notification Toast -->

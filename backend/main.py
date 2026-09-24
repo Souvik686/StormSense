@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query, status, Depends
+from fastapi import FastAPI, HTTPException, Query, status, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -149,7 +149,9 @@ app.add_middleware(
     # The API is read-only and unauthenticated; no cookies or auth headers are
     # sent, so credentialed cross-origin requests are not needed.
     allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    # POST is needed for the operator siren broadcast (/api/siren/dispatch);
+    # the rest of the API remains read-only GET.
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-Min-Lat", "X-Max-Lat", "X-Min-Lon", "X-Max-Lon"],
 )
@@ -1799,6 +1801,12 @@ async def forecast_conditions(
     def _blocks(p):
         return (p.get("main") or {}), (p.get("wind") or {})
 
+    def _rain_3h(p):
+        # OpenWeather publishes rain volume as mm over the 3h window ENDING at
+        # this point's timestamp, under "rain": {"3h": <mm>} -- absent entirely
+        # (not zero) when the point forecasts no rain at all.
+        return (p.get("rain") or {}).get("3h")
+
     def _num(v):
         try:
             return float(v)
@@ -1824,6 +1832,11 @@ async def forecast_conditions(
         wind_ms = lerp(w0.get("speed"), w1.get("speed"))
         wind_deg = lerp(w0.get("deg"), w1.get("deg"))
         desc = ((p1 if w >= 0.5 else p0).get("weather") or [{}])[0].get("description")
+        # Rain is an accumulation over each point's own preceding 3h, not a
+        # continuous field, so it is not linearly interpolated like temp/wind --
+        # that would blend two different windows into a number that describes
+        # neither. Take the NEARER point's own published 3h total instead.
+        rain_mm = _num(_rain_3h(p1 if w >= 0.5 else p0))
         basis = "interpolated between two published forecast points"
         bracket = [
             datetime.fromtimestamp(t0, tz=timezone.utc).isoformat(),
@@ -1839,6 +1852,7 @@ async def forecast_conditions(
         temp_c, hum, pres = _num(m.get("temp")), _num(m.get("humidity")), _num(m.get("pressure"))
         wind_ms, wind_deg = _num(wb.get("speed")), _num(wb.get("deg"))
         desc = (p.get("weather") or [{}])[0].get("description")
+        rain_mm = _num(_rain_3h(p))
         basis = "nearest published forecast point (target outside published range)"
         bracket = [datetime.fromtimestamp(float(p["dt"]), tz=timezone.utc).isoformat()]
         actual_offset = round((float(p["dt"]) - now_epoch) / 3600.0, 2)
@@ -1860,6 +1874,9 @@ async def forecast_conditions(
         "wind_speed_kmh": round(wind_ms * 3.6, 1) if wind_ms is not None else None,
         "wind_direction_deg": round(wind_deg) if wind_deg is not None else None,
         "weather_description": desc,
+        # mm over the 3h window ending at the source point's own timestamp; None
+        # (not 0) when OpenWeather published no rain field for that point at all.
+        "rain_3h_mm": round(rain_mm, 1) if rain_mm is not None else None,
     }
 
 
@@ -2195,6 +2212,327 @@ async def force_live_refresh(svc: NowcastService = Depends(_get_service)):
     for verifying the refresh path without waiting for the 5-minute tick)."""
     ok = await asyncio.get_running_loop().run_in_executor(None, svc.refresh_live_state)
     return {"refreshed": ok, "live_status": svc.get_live_status()}
+
+
+# ---------------------------------------------------------------------------
+# Operator-broadcast alert (siren) fan-out.
+#
+# SCOPE, stated plainly: this reaches ONLY browsers that currently have this
+# dashboard open and are connected to THIS server process. It is not connected
+# to any government alerting infrastructure, sends no SMS, and triggers no
+# physical siren. It is an in-app broadcast to this app's own viewers.
+#
+# Server-Sent Events rather than WebSockets: the traffic is one-directional
+# (server -> viewer) and SSE reconnects on its own, so there is no client-side
+# reconnect logic to get wrong.
+#
+# In-process only: subscribers live in this module's memory, so a multi-worker
+# or multi-machine deployment would fan out only to the worker that served the
+# POST. Single-process (`python run_server.py`) is the deployment this targets;
+# anything wider needs a shared broker (Redis pub/sub or similar) instead.
+# ---------------------------------------------------------------------------
+_siren_subscribers: "set[asyncio.Queue]" = set()
+
+
+@app.get("/api/siren/stream", tags=["Alerts"])
+async def siren_stream():
+    """Long-lived SSE stream a viewer subscribes to to receive siren broadcasts."""
+    from fastapi.responses import StreamingResponse
+
+    queue: asyncio.Queue = asyncio.Queue()
+    _siren_subscribers.add(queue)
+
+    async def event_generator():
+        try:
+            # Comment frames double as a keep-alive: proxies commonly close an
+            # idle connection, and a siren broadcast may be hours apart.
+            yield ": connected\n\n"
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=25.0)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield f"event: siren\ndata: {json.dumps(payload)}\n\n"
+        finally:
+            _siren_subscribers.discard(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Without this, nginx and similar buffer the stream and nothing is
+            # delivered until the connection closes -- i.e. never, here.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/siren/dispatch", tags=["Alerts"])
+async def siren_dispatch(request: Request):
+    """Broadcast a siren alert to every currently-connected viewer.
+
+    Returns how many viewers it was delivered to, so the operator sees the real
+    reach rather than assuming it went somewhere it did not.
+
+    Takes a raw dict rather than a Pydantic model: this module uses
+    `from __future__ import annotations`, and a model declared this late in the
+    file cannot have its stringised annotations resolved by Pydantic.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    def _clean(key: str, limit: int = 500) -> Optional[str]:
+        # The message is rendered into other viewers' DOM, so bound its length
+        # here; the frontend inserts it as text, never as HTML.
+        val = body.get(key)
+        return str(val)[:limit] if val is not None else None
+
+    # TARGET AREA.
+    #
+    # Derived from the model's own risk field here rather than taken from the
+    # request, so the alert's geography comes from the same grid the map paints
+    # and a caller cannot aim it somewhere the model never flagged. Viewers
+    # filter themselves against this circle locally -- no viewer location is
+    # ever sent to or stored by this server.
+    # TWO ZONES, because "dangerous now" and "dangerous in four hours" call for
+    # different things from a viewer. The immediate zone is built from the
+    # model's NOW field; the advance zone from its LATER leads, and only where
+    # the risk is genuinely higher later than it is now -- a place that is
+    # already bad and decaying is an immediate alert, not a pre-alarm, and
+    # labelling it "approaching" would misdescribe the trend.
+    center_lat = center_lon = peak_pct = None
+    advance = None
+    try:
+        svc = _get_service()
+        pred = svc.live_pred if svc.live_pred is not None else None
+        if pred is not None:
+            grid = np.asarray(pred["overall_risk"])
+            if grid.ndim != 3:
+                grid = grid[None, ...]
+
+            now_field = grid[0]
+            later_field = grid[1:].max(axis=0) if grid.shape[0] > 1 else None
+
+            # RESTRICTED TO CELLS INSIDE A WEST BENGAL DISTRICT.
+            #
+            # The model grid (20-28N, 84-90E) extends well beyond the state, and
+            # its raw maximum frequently lands in Bihar or Jharkhand -- measured
+            # 214-400km from every population centre in West Bengal, which would
+            # aim the alert circle at a place no viewer of this dashboard is
+            # near and silently reach nobody. Restricting to the same district
+            # cell map the dashboard's own aggregation uses keeps the target
+            # inside the monitored region.
+            wb_cells = [ij for cells in svc.district_cells.values() for ij in cells]
+
+            def _peak(field):
+                best = None
+                for (i, j) in wb_cells:
+                    v = float(field[i, j])
+                    if best is None or v > best[0]:
+                        best = (v, i, j)
+                return best
+
+            best_now = _peak(now_field)
+            if best_now is not None:
+                _, i, j = best_now
+                center_lat = float(svc.lats[i])
+                center_lon = float(svc.lons[j])
+                peak_pct = int(round(best_now[0] * 100))
+
+            if later_field is not None:
+                # Only cells that RISE meaningfully from now: the pre-alarm is
+                # about change, so a flat or falling cell is excluded even when
+                # its absolute value is high.
+                rising = [
+                    (float(later_field[i, j]), i, j)
+                    for (i, j) in wb_cells
+                    if float(later_field[i, j]) - float(now_field[i, j]) >= 0.10
+                ]
+                if rising:
+                    v, i, j = max(rising, key=lambda t: t[0])
+                    # Which served lead that peak actually arrives at, so the
+                    # viewer is told when rather than just "later".
+                    lead_times = list(getattr(svc, "lead_times", []) or [])
+                    k = int(np.argmax(grid[1:, i, j])) + 1
+                    eta = lead_times[k] if k < len(lead_times) else None
+                    advance = {
+                        "center_lat": float(svc.lats[i]),
+                        "center_lon": float(svc.lons[j]),
+                        "radius_km": None,  # filled in below with the request radius
+                        "peak_risk_pct": int(round(v * 100)),
+                        "rises_from_pct": int(round(float(now_field[i, j]) * 100)),
+                        "eta_hours": eta,
+                    }
+    except Exception:
+        # No live field (e.g. historical mode or a failed ingest): broadcast
+        # without a target area, which every viewer then treats as state-wide
+        # rather than silently alerting nobody.
+        pass
+
+    try:
+        radius_km = float(body.get("radius_km", 75.0))
+    except (TypeError, ValueError):
+        radius_km = 75.0
+    radius_km = max(5.0, min(500.0, radius_km))
+
+    payload = {
+        "district": _clean("district", 120),
+        "level": _clean("level", 32),
+        "message": _clean("message"),
+        "issued_at_utc": datetime.now(timezone.utc).isoformat(),
+        # Named so no consumer can mistake this for an official/government alert.
+        "scope": "in_app_broadcast_only",
+        # Absent center => untargeted: viewers show it regardless of location.
+        "target_area": (
+            {
+                "center_lat": center_lat,
+                "center_lon": center_lon,
+                "radius_km": radius_km,
+                "peak_risk_pct": peak_pct,
+                "basis": "model overall_risk maximum at NOW, inside West Bengal",
+            }
+            if center_lat is not None else None
+        ),
+        # Somewhere calm now but forecast to deteriorate: viewers inside this
+        # circle and outside the immediate one get a quieter heads-up instead
+        # of a full siren for weather that has not arrived.
+        "advance_area": (
+            dict(advance, radius_km=radius_km, basis="cells rising >=10pp from NOW within served leads")
+            if advance is not None else None
+        ),
+    }
+    for queue in list(_siren_subscribers):
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass
+    # delivered_to_viewers counts connections REACHED, not viewers who will
+    # display it: each viewer decides locally whether it is inside the circle,
+    # and the server deliberately cannot know that.
+    return {
+        "dispatched": True,
+        "delivered_to_viewers": len(_siren_subscribers),
+        "alert": payload,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Advisory bulletins.
+#
+# Distinct in KIND from the siren, not just severity: a standing, readable log
+# rather than a full-screen interrupt. A viewer who opens the dashboard an
+# hour after an advisory was posted can still read it; a siren broadcast that
+# fired while their tab was closed is gone. In-memory, single-process, same
+# scope note as the siren subscriber set above.
+# ---------------------------------------------------------------------------
+_advisories: list = []
+_ADVISORY_MAX = 200  # bounded so a long-running process cannot grow this unboundedly
+
+
+@app.get("/api/advisories", tags=["Alerts"])
+async def list_advisories(limit: int = Query(50, ge=1, le=_ADVISORY_MAX)):
+    """Most recent advisories first."""
+    return {"advisories": list(reversed(_advisories[-limit:]))}
+
+
+@app.post("/api/advisories", tags=["Alerts"])
+async def post_advisory(request: Request):
+    """Publish an advisory bulletin: informational, no siren, no overlay.
+
+    Distinguished from /api/siren/dispatch by being a persistent, readable
+    record rather than a live interrupt -- the right tool for "conditions are
+    being monitored" rather than "act now".
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    def _clean(key: str, limit: int = 500) -> Optional[str]:
+        val = body.get(key)
+        return str(val)[:limit] if val is not None else None
+
+    entry = {
+        "id": len(_advisories) + 1,
+        "district": _clean("district", 120),
+        "level": _clean("level", 32),
+        "message": _clean("message", 2000),
+        "issued_at_utc": datetime.now(timezone.utc).isoformat(),
+        "scope": "in_app_bulletin_only",
+    }
+    _advisories.append(entry)
+    del _advisories[:-_ADVISORY_MAX]  # keep only the most recent _ADVISORY_MAX
+    return {"posted": True, "advisory": entry, "total_advisories": len(_advisories)}
+
+
+# ---------------------------------------------------------------------------
+# Operational-action log: "Disseminate Cell Alerts".
+#
+# Cell Broadcast (every phone in a geographic area, no app or opt-in needed)
+# is restricted to government-authorized alerting systems and telecom
+# operators; no commercial API grants a private app this capability, and nothing
+# here pretends otherwise. What IS real and useful: a timestamped record that
+# an operator judged a situation serious enough to warrant reach beyond this
+# website's own connected viewers. That record is what this endpoint keeps --
+# an auditable request/decision log, not a delivery mechanism. If a real
+# extended-reach channel (e.g. SMS to an opt-in contact list) is added later,
+# it hangs off this same log rather than replacing it.
+# ---------------------------------------------------------------------------
+_operational_actions: list = []
+_OPERATIONAL_ACTION_MAX = 200
+
+
+@app.get("/api/operational-actions", tags=["Alerts"])
+async def list_operational_actions(limit: int = Query(50, ge=1, le=_OPERATIONAL_ACTION_MAX)):
+    return {"actions": list(reversed(_operational_actions[-limit:]))}
+
+
+@app.post("/api/operational-actions", tags=["Alerts"])
+async def log_operational_action(request: Request):
+    """Record an operator's request for extended (beyond-website) dissemination.
+
+    This does NOT reach any phone. It is an honest stand-in for the capability
+    named on the button -- a decision log an operator or a future real
+    dissemination integration can act on -- rather than a silent no-op or a
+    claim this reached anyone off-site.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    def _clean(key: str, limit: int = 500) -> Optional[str]:
+        val = body.get(key)
+        return str(val)[:limit] if val is not None else None
+
+    entry = {
+        "id": len(_operational_actions) + 1,
+        "action": "disseminate_cell_alerts_requested",
+        "district": _clean("district", 120),
+        "level": _clean("level", 32),
+        "message": _clean("message", 2000),
+        "requested_at_utc": datetime.now(timezone.utc).isoformat(),
+        "delivery_status": "not_sent",
+        "delivery_note": (
+            "Cell Broadcast requires telecom/government alerting infrastructure "
+            "this app does not have access to. Logged for audit and for handoff "
+            "to a real dissemination channel; no message was sent to any phone."
+        ),
+    }
+    _operational_actions.append(entry)
+    del _operational_actions[:-_OPERATIONAL_ACTION_MAX]
+    return {"logged": True, "action": entry, "total_actions": len(_operational_actions)}
 
 
 if __name__ == "__main__":

@@ -1071,7 +1071,66 @@
    * text/action match the SAME level the hazard cards and district panel are
    * showing for the same summary.
    */
+  // Remembers the previous refresh's elevated-district count so the sidebar
+  // notice can report a TREND (expanding / easing / steady) instead of a
+  // frozen snapshot naming only the single worst district. Module-scoped so
+  // it survives across refreshes within the page session but never persists
+  // beyond it -- a reload has no prior state to compare against, which is
+  // handled explicitly below rather than guessed at.
+  var _prevElevatedCount = null;
+
+  // Guards against a slower, older fetch (e.g. after switching live/historical
+  // mode rapidly) landing after a newer one and repainting the box with stale
+  // data -- the same late-response race every other panel in this file
+  // guards against with currentLeadHours, applied here since this fetch runs
+  // independently of whichever horizon the rest of the dashboard has selected.
+  var _sidebarAlertRequestId = 0;
+
+  /**
+   * The sidebar notice merges NOW/+2h/+4h/+6h rather than reading whichever
+   * single horizon happens to be selected elsewhere on the dashboard. A
+   * district can be Normal right now but ALERT at +4h; a notice scoped to
+   * only the currently-viewed horizon would miss that. For each district,
+   * "elevated" means it reaches WATCH or above at ANY of the four horizons,
+   * and the headline percentage is that district's own worst value across
+   * them -- so a passing glance at this one box surfaces the full 0-6h
+   * picture, not a slice of it that happens to match the main view.
+   */
   function applySidebarAlertState(summary) {
+    var box = document.getElementById("bind-sidebar-alert-title");
+    if (!box) return;
+
+    var mode = window.stormSenseMode || "live";
+    var modeQS = "&mode=" + mode;
+    var requestId = ++_sidebarAlertRequestId;
+
+    Promise.all([0, 2, 4, 6].map(function (lead) {
+      return fetch(API_BASE + "/api/nowcast/districts?lead=" + lead + modeQS)
+        .then(parseJson).catch(function () { return null; });
+    })).then(function (perHorizon) {
+      if (requestId !== _sidebarAlertRequestId) return; // superseded, drop it
+
+      // Merge: per district, keep its worst (highest overall_pct) reading
+      // across whichever of the four horizon fetches actually returned data.
+      var byDistrict = {};
+      var RANK = { green: 0, yellow: 1, orange: 2, red: 3 };
+      perHorizon.forEach(function (list) {
+        if (!Array.isArray(list)) return;
+        list.forEach(function (d) {
+          if (!d || !d.district) return;
+          var cur = byDistrict[d.district];
+          if (!cur || (RANK[d.risk_level] || 0) > (RANK[cur.risk_level] || 0)) {
+            byDistrict[d.district] = d;
+          }
+        });
+      });
+      var merged = Object.keys(byDistrict).map(function (k) { return byDistrict[k]; });
+
+      _paintSidebarAlert(summary, merged.length ? merged : null);
+    });
+  }
+
+  function _paintSidebarAlert(summary, mergedDistricts) {
     var box = document.getElementById("bind-sidebar-alert-title");
     if (!box) return;
     var card = box.closest(".rounded-2xl");
@@ -1080,18 +1139,36 @@
     var dot = card ? card.querySelector(".animate-ping") : null;
     var dotSolid = card ? card.querySelectorAll(".relative.inline-flex.rounded-full")[0] : null;
 
-    var hz = summary && summary.hazards;
-    var overall = hz && hz.overall;
-    var level = (overall && overall.level) || "green";
-    var pct = overall ? overall.probability : null;
-    var activeDistrict = summary && summary.active_high_risk_district;
-
     var STYLES = {
       green:  { grad: "from-emerald-950/50 via-emerald-900/15 to-slate-950/80", border: "border-emerald-500/30 hover:border-emerald-500/50", glow: "bg-emerald-500/10", dot: "bg-emerald-400", showSiren: false, urgent: false },
       yellow: { grad: "from-amber-950/50 via-amber-900/15 to-slate-950/80",     border: "border-amber-500/30 hover:border-amber-500/50",   glow: "bg-amber-500/10",   dot: "bg-amber-400",   showSiren: false, urgent: false },
       orange: { grad: "from-orange-950/55 via-orange-900/20 to-slate-950/80",   border: "border-orange-500/40 hover:border-orange-500/60", glow: "bg-orange-500/15",  dot: "bg-orange-400",  showSiren: true,  urgent: true  },
       red:    { grad: "from-red-950/60 via-red-900/20 to-slate-950/80",        border: "border-red-500/40 hover:border-red-500/60",       glow: "bg-red-500/15",     dot: "bg-red-500",     showSiren: true,  urgent: true  },
     };
+
+    // Worst district ACROSS THE MERGED 0-6h WINDOW drives the box's color and
+    // headline -- falls back to the single-horizon summary only when the merge
+    // fetch failed entirely (e.g. offline), so the box still shows something.
+    var elevatedList = Array.isArray(mergedDistricts)
+      ? mergedDistricts.filter(function (d) {
+          return d && (d.risk_level === "yellow" || d.risk_level === "orange" || d.risk_level === "red");
+        })
+      : null;
+    var worst = null;
+    if (Array.isArray(mergedDistricts) && mergedDistricts.length) {
+      worst = mergedDistricts.reduce(function (a, b) {
+        return (b.overall_pct || 0) > (a.overall_pct || 0) ? b : a;
+      });
+    }
+
+    var hz = summary && summary.hazards;
+    var overall = hz && hz.overall;
+    var level = worst ? worst.risk_level : ((overall && overall.level) || "green");
+    var pct = worst ? worst.overall_pct : (overall ? overall.probability : null);
+    var districtName = worst ? worst.district
+      : ((summary && summary.active_high_risk_district && summary.active_high_risk_district.district) || "West Bengal");
+    var stage = worst ? worst.stage : (overall && overall.stage);
+
     var s = STYLES[level] || STYLES.green;
 
     if (card) {
@@ -1106,18 +1183,44 @@
       : "absolute inline-flex h-full w-full rounded-full " + s.dot + " opacity-0"; // no ping when calm
     if (dotSolid) dotSolid.className = "relative inline-flex rounded-full size-2.5 " + s.dot;
 
-    var districtName = (activeDistrict && activeDistrict.district) || "West Bengal";
     var pctText = (pct != null) ? (pct + "%") : "—";
+    var elevatedCount = elevatedList ? elevatedList.length : null;
+
+    var trendPhrase = null;
+    if (elevatedCount != null && _prevElevatedCount != null) {
+      var delta = elevatedCount - _prevElevatedCount;
+      if (delta > 0) {
+        trendPhrase = (delta === 1 ? "1 district" : delta + " districts") + " newly elevated";
+      } else if (delta < 0) {
+        trendPhrase = (-delta === 1 ? "1 district" : (-delta) + " districts") + " stood down";
+      }
+      // delta === 0 falls through with no phrase: "steady" is communicated by
+      // its absence rather than an extra "no change" sentence competing for
+      // the same line as the district count and the worst-case percentage.
+    }
 
     if (!s.urgent) {
       box.textContent = districtName === "West Bengal" ? "No Active Watch" : districtName + " — Normal";
-      if (bodyEl) bodyEl.textContent = "Model risk is currently " + pctText +
+      if (bodyEl) bodyEl.textContent = "Model risk over the next 6h is currently " + pctText +
         " (Normal). No AI severe-weather alert is active.";
+    } else if (elevatedCount != null && elevatedCount > 1) {
+      // Multiple districts elevated at some point in NOW..+6h: lead with the
+      // count and trend (the operationally interesting question -- is this
+      // spreading or contained) and name the worst one for the specific
+      // number to act on, rather than erasing the other N-1 districts the
+      // way naming only the top pick did.
+      box.textContent = elevatedCount + " Districts Elevated (0–6h)" +
+        (trendPhrase ? " — " + trendPhrase.charAt(0).toUpperCase() + trendPhrase.slice(1) : "");
+      if (bodyEl) bodyEl.textContent = "AI severe-weather watch active across " + elevatedCount +
+        " districts within the next 6h. Highest: " + districtName + " (" + pctText +
+        (stage ? ", " + stage : "") + ").";
     } else {
       box.textContent = districtName + " Convective " + (level === "red" ? "Warning" : "Watch");
       if (bodyEl) bodyEl.textContent = "AI severe weather forecast active for " +
-        districtName + " (" + pctText + (overall && overall.stage ? ", " + overall.stage : "") + ").";
+        districtName + " within the next 6h (" + pctText + (stage ? ", " + stage : "") + ").";
     }
+
+    if (elevatedCount != null) _prevElevatedCount = elevatedCount;
 
     if (sirenBtn) {
       sirenBtn.classList.toggle("hidden", !s.showSiren);
@@ -1164,14 +1267,22 @@
     return isNaN(d.getTime()) ? new Date("2024-05-26T12:00:00Z") : d;
   }
 
+  // Despite the name (kept so its 15 call sites did not all need renaming),
+  // this renders in IST, not UTC. The underlying Date arithmetic everywhere
+  // else in the app -- lead/horizon math, temporal-leakage checks, the API
+  // contract -- stays in UTC exactly as before; this only changes the STRING
+  // a viewer reads. UTC+5:30 arithmetic on the absolute epoch value, same
+  // pattern as formatIstStamp/updateIstClock, so it does not depend on the
+  // browser's own local timezone.
   function formatUtcDateTime(dateObj) {
     var d = typeof dateObj === "string" ? parseUtcIso(dateObj) : dateObj;
-    var year = d.getUTCFullYear();
-    var month = String(d.getUTCMonth() + 1).padStart(2, "0");
-    var day = String(d.getUTCDate()).padStart(2, "0");
-    var hours = String(d.getUTCHours()).padStart(2, "0");
-    var minutes = String(d.getUTCMinutes()).padStart(2, "0");
-    return year + "-" + month + "-" + day + " " + hours + ":" + minutes + " UTC";
+    var ist = new Date(d.getTime() + (5.5 * 3600000));
+    var year = ist.getUTCFullYear();
+    var month = String(ist.getUTCMonth() + 1).padStart(2, "0");
+    var day = String(ist.getUTCDate()).padStart(2, "0");
+    var hours = String(ist.getUTCHours()).padStart(2, "0");
+    var minutes = String(ist.getUTCMinutes()).padStart(2, "0");
+    return year + "-" + month + "-" + day + " " + hours + ":" + minutes + " IST";
   }
 
   /**
@@ -1303,17 +1414,14 @@
       var dMM = Math.round((dAbs - dHH) * 60);
       setText("fv-offset-from-now",
               dSign + dHH + ":" + (dMM < 10 ? "0" : "") + dMM + " FROM NOW");
-      var gapMin = demoInfo.display_vs_target_minutes;
-      var tgt = demoInfo.forecast_target_time_utc
-        ? formatIstClock(parseUtcIso(demoInfo.forecast_target_time_utc)) : null;
+      // The "model target HH:MM (N min earlier/later)" clause is dropped here:
+      // it restated the same lead-time approximation the headline offset above
+      // already discloses, and read as a second, confusing timestamp next to
+      // it. "+Nh lead" and the analysis time below are kept -- those are the
+      // two facts a viewer cannot get from the headline alone.
       setText("fv-valid-time",
-        (tgt ? "model target " + tgt : "")
-        + (gapMin != null
-            ? " (" + (gapMin === 0 ? "exact"
-                : Math.abs(gapMin) + " min " + (gapMin < 0 ? "earlier" : "later")) + ")"
-            : "")
-        + (demoInfo.actual_model_lead_hours != null
-            ? " · +" + demoInfo.actual_model_lead_hours + "h lead" : ""));
+        demoInfo.actual_model_lead_hours != null
+          ? "+" + demoInfo.actual_model_lead_hours + "h lead" : "");
       var anaEl2 = document.getElementById("fv-gfs-time");
       if (anaEl2 && demoInfo.analysis_time_utc) {
         anaEl2.textContent = formatUtcDateTime(parseUtcIso(demoInfo.analysis_time_utc));
@@ -1588,6 +1696,8 @@
         var districts = results[2];
         var cells = results[3];
 
+        if (districts && districts.length) window.StormSenseDistrictsData = districts;
+
         if (summary && summary.hazards) {
           window.StormSenseNowcastData = summary;
           paintForecastCards(summary);
@@ -1598,7 +1708,6 @@
         applyFreshnessState(summary);
 
         if (districts && districts.length) {
-          window.StormSenseDistrictsData = districts;
           renderDistricts(adaptDistricts(districts, lead, summary && summary.issue_time));
           // Bulletins come from the SAME district aggregation the map uses.
           window.renderBulletinsFromDistricts(districts, summary);
@@ -1813,7 +1922,7 @@
         banner.className = "operational-banner mode-banner-historical px-6 lg:px-8 flex items-center justify-between text-xs";
       }
       if (bannerDisclaimer) {
-        bannerDisclaimer.textContent = "StormSense ML Case Study · Cyclone Remal · analysis 26 May 2024 12:00 UTC · Grid: 0.25° (~28 km)";
+        bannerDisclaimer.textContent = "StormSense ML Case Study · Cyclone Remal · analysis 26 May 2024 17:30 IST · Grid: 0.25° (~28 km)";
       }
 
       if (deskModePill) {
@@ -1822,7 +1931,7 @@
       if (deskModeDot) deskModeDot.className = "size-2 rounded-full bg-cyan-400 animate-pulse";
       if (deskModeLabel) deskModeLabel.textContent = "HISTORICAL CASE STUDY · CYCLONE REMAL";
       if (deskSubtitle) {
-        deskSubtitle.textContent = "Historical case study (0–6 h): Cyclone Remal, driven by the StormSense model from the 26 May 2024 12:00 UTC reanalysis state.";
+        deskSubtitle.textContent = "Historical case study (0–6 h): Cyclone Remal, driven by the StormSense model from the 26 May 2024 17:30 IST reanalysis state.";
       }
 
       // The single refresh control stays visible in historical mode; its
@@ -1849,7 +1958,7 @@
       // "Current Observations" with a live age ("just now") presented 2024 data
       // as today's weather.
       setText("location-obs-title", "Remal Historical Conditions · t=0");
-      setText("location-obs-age", "analysis 26 May 2024 · 12:00 UTC");
+      setText("location-obs-age", "analysis 26 May 2024 · 17:30 IST");
       var obsDotH = document.getElementById("location-obs-dot");
       if (obsDotH) obsDotH.className = "size-1.5 rounded-full bg-cyan-400";
       var obsHeadH = document.getElementById("location-obs-heading");
@@ -2576,7 +2685,7 @@
     // NOW after selecting another horizon does not leave a stale heading
     // above the event's t=0 values.
     setText("location-obs-title", "Remal Historical Conditions · t=0");
-    setText("location-obs-age", "analysis 26 May 2024 · 12:00 UTC");
+    setText("location-obs-age", "analysis 26 May 2024 · 17:30 IST");
     var t0Head = document.getElementById("location-obs-heading");
     if (t0Head) t0Head.className = "text-[11px] font-bold font-mono text-cyan-300 uppercase tracking-wider flex items-center gap-1.5";
     var t0Dot = document.getElementById("location-obs-dot");
@@ -2586,13 +2695,13 @@
     setText("bind-rain", histText(t0.rainfall_mm, 1, " mm/h"));
     setText("bind-humidity", t0.humidity_pct != null ? t0.humidity_pct + "%" : "—");
     setText("bind-wind", histText(t0.wind_speed_kmh, 1, " km/h"));
-    var histSource = "Reanalysis · 26 May 2024 12:00 UTC";
+    var histSource = "Reanalysis · 26 May 2024 17:30 IST";
     ["bind-temp-source", "bind-humidity-source", "bind-wind-source"].forEach(function (id) {
       setText(id, histSource);
     });
     // Named as a RATE, because that is what the reanalysis field is (mm/hour),
     // not an hourly accumulation like the live station observation.
-    setText("bind-rain-source", "Reanalysis rate · 26 May 2024 12:00 UTC");
+    setText("bind-rain-source", "Reanalysis rate · 26 May 2024 17:30 IST");
   }
 
   /**
@@ -3138,7 +3247,7 @@
       setText("bind-humidity", (data.currentConditions.humidityPct != null ? data.currentConditions.humidityPct + "%" : "—"));
       setText("bind-wind", (data.currentConditions.windKmh != null ? data.currentConditions.windKmh.toFixed(1) + " km/h " + (data.currentConditions.windDirection || "") : "—"));
 
-      var sourceLabel = "HISTORICAL INPUT (t=0) · 26 May 2024 12:00 UTC";
+      var sourceLabel = "HISTORICAL INPUT (t=0) · 26 May 2024 17:30 IST";
       setText("bind-temp-source", sourceLabel);
       setText("bind-rain-source", sourceLabel);
       setText("bind-humidity-source", sourceLabel);
@@ -3710,7 +3819,7 @@
 
     var stateLayer = L.geoJSON(geojsonData, {
       style: {
-        color: "#0284c7",
+        color: "#000000",
         weight: 2.2,
         opacity: 0.95,
         fillColor: "transparent",
@@ -4316,7 +4425,7 @@
     var isHistoricalNow = isNow && (window.stormSenseMode === "historical");
 
     if (isHistoricalNow) {
-      if (title) title.textContent = "CYCLONE REMAL · MODEL T0 RISK (26 MAY 2024 12:00 UTC)";
+      if (title) title.textContent = "CYCLONE REMAL · MODEL T0 RISK (26 MAY 2024 17:30 IST)";
       if (pills) {
         // Same probability bands as every other horizon
         // (NowcastService._level_for_prob: 0.25 / 0.50 / 0.75).
@@ -4328,7 +4437,7 @@
       }
       if (sub) {
         sub.textContent = "StormSense model risk valid at case-study T0 "
-          + "· 26 May 2024 12:00 UTC · observed rainfall is a separate "
+          + "· 26 May 2024 17:30 IST · observed rainfall is a separate "
           + "product on the Radar view";
       }
     } else if (isNow) {
@@ -4341,14 +4450,15 @@
       if (pills) {
         // Same band edges as the forecast horizons
         // (NowcastService._level_for_prob: 0.25 / 0.50 / 0.75), because the same
-        // surface renderer paints them.
+        // surface renderer paints them. Matches the +2h/+4h/+6h legend exactly
+        // (four risk bands only) -- the "Obs station" / "Live location" pills
+        // this used to add here are a different layer (see initMap's own
+        // legend for those) and did not appear on the other horizons.
         pills.innerHTML =
           '<span class="px-2 py-0.5 bg-emerald-500 text-slate-950 rounded">&lt;25% Normal</span>' +
           '<span class="px-2 py-0.5 bg-amber-500 text-slate-950 rounded">25–50% Watch</span>' +
           '<span class="px-2 py-0.5 bg-orange-500 text-white rounded">50–75% Alert</span>' +
-          '<span class="px-2 py-0.5 bg-red-500 text-white rounded">≥75% Warning</span>' +
-          '<span class="px-2 py-0.5 rounded text-white" style="background:#334155;">Obs station</span>' +
-          '<span class="px-2 py-0.5 bg-purple-500 text-white rounded">Live location</span>';
+          '<span class="px-2 py-0.5 bg-red-500 text-white rounded">≥75% Warning</span>';
       }
       if (sub) {
         // NOW is the model lead whose VALID TIME is nearest the current
@@ -4853,7 +4963,7 @@
         rs.className = "text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/40 font-bold";
       }
       if (ri) ri.textContent = "ERA5 reanalysis · observed rainfall rate (mm/h) · not a forecast";
-      if (ru) ru.textContent = "Analysis 26 May 2024 · 12:00 UTC";
+      if (ru) ru.textContent = "Analysis 26 May 2024 · 17:30 IST";
     } else {
       if (spt) spt.textContent = "AI Spatial Forecast & Live Radar";
       if (map && typeof loadRainViewerRadar === "function") loadRainViewerRadar(map);
@@ -4913,7 +5023,7 @@
             className: 'radar-archive-msg',
             html: '<div style="color:#00e5ff; background:rgba(0,0,0,0.85); padding:10px; border:1px solid #00e5ff; text-align:center; font-family:monospace; line-height:1.45;">'
                 + '<b>OBSERVED RAINFALL FIELD · t=0</b><br/>'
-                + 'Cyclone Remal · analysis 26 May 2024 12:00 UTC<br/>'
+                + 'Cyclone Remal · analysis 26 May 2024 17:30 IST<br/>'
                 + '<span style="opacity:.85">ERA5 reanalysis · mm/hour · not a forecast</span></div>',
             iconSize: [340, 74]
         });
@@ -4933,7 +5043,7 @@
         var ri = document.getElementById("radar-info");
         if (ri) ri.textContent = "ERA5 reanalysis · observed rainfall rate (mm/h) · not a forecast";
         var ru = document.getElementById("radar-last-update");
-        if (ru) ru.textContent = "Analysis 26 May 2024 · 12:00 UTC";
+        if (ru) ru.textContent = "Analysis 26 May 2024 · 17:30 IST";
     } else {
         if (!radarLayer) {
             loadRainViewerRadar(map);
@@ -5028,6 +5138,12 @@
         if (b.textContent.trim() === "NOW") {
           b.classList.add("bg-cyan-600", "text-white", "font-bold");
           b.classList.remove("text-slate-400", "font-medium");
+          // The wall-clock-availability dimming (opacity 0.45, applied by
+          // refreshWallclockHorizonAvailability()) stays informative for the
+          // OTHER buttons, but the one the viewer actively selected must always
+          // read clearly -- a chosen horizon that looks disabled reads as a
+          // rendering fault, not as the honest staleness signal it is.
+          b.style.opacity = "1";
         }
       });
       // Re-stamp the temporal banner at lead zero, or the "Valid ..." line
@@ -5070,6 +5186,7 @@
         fetch(API_BASE + "/api/nowcast/xai?lead=0" + nowModeQS).then(parseJson).catch(function () { return null; })
       ]).then(function (res) {
         var summary = res[0], districts = res[1], cells = res[2], xai = res[3];
+        if (districts && districts.length) window.StormSenseDistrictsData = districts;
         if (summary && summary.hazards) {
           window.StormSenseCurrentSummary = summary;
           window.StormSenseNowcastData = summary;
@@ -5082,7 +5199,6 @@
           }
         }
         if (districts && districts.length) {
-          window.StormSenseDistrictsData = districts;
           renderDistricts(adaptDistricts(districts, 0,
             (summary && summary.issue_time) || null));
           window.renderBulletinsFromDistricts(districts, summary);
@@ -5154,6 +5270,11 @@
       if (txt === "+" + lead + "h") {
         b.classList.add("bg-cyan-600", "text-white", "font-bold");
         b.classList.remove("text-slate-400", "font-medium");
+        // See the NOW branch's identical line: the selected horizon must
+        // always read clearly, even when refreshWallclockHorizonAvailability()
+        // has dimmed it to flag that it is not truly servable at wall-clock
+        // right now. The dimming stays meaningful on every OTHER button.
+        b.style.opacity = "1";
       }
     });
 
@@ -5182,6 +5303,7 @@
 
         var issueTime = (summary && summary.issue_time) || "2024-05-26T12:00:00Z";
         updateDynamicTimes(issueTime, lead, summary && summary.analysis_time_iso, summary && summary.now_anchor, summary && summary.demo_horizon);
+        if (districts && districts.length) window.StormSenseDistrictsData = districts;
         applyRegionState(summary);
 
         // Paint the hazard cards from whichever mode actually returned a
@@ -5195,7 +5317,6 @@
         applyFreshnessState(summary);
 
         if (districts && districts.length) {
-          window.StormSenseDistrictsData = districts;
           renderDistricts(adaptDistricts(districts, lead, issueTime));
           window.renderBulletinsFromDistricts(districts, summary);
         } else {
@@ -5258,8 +5379,377 @@
 
   window.executeSirenDispatch = function () {
     window.closeSirenModal();
-    window.showToast("Simulated Advisory Dispatched: Automated CAP XML & SMS advisory broadcast simulated for District Disaster Management Units.", "emergency_share");
+
+    // The worst district in the merged 0-6h view, so the broadcast names what
+    // the dashboard is actually flagging rather than a placeholder.
+    var districts = window.StormSenseDistrictsData;
+    var worst = (Array.isArray(districts) && districts.length)
+      ? districts.reduce(function (a, b) {
+          return (b.overall_pct || 0) > (a.overall_pct || 0) ? b : a;
+        })
+      : null;
+
+    fetch(API_BASE + "/api/siren/dispatch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        district: worst ? worst.district : null,
+        level: worst ? worst.risk_level : null,
+        message: worst
+          ? ("Severe convective weather advisory for " + worst.district
+             + " (" + worst.overall_pct + "% model risk).")
+          : "Severe convective weather advisory issued."
+      })
+    })
+      .then(parseJson)
+      .then(function (r) {
+        // Report the REAL reach, and no more than is actually known: the
+        // server counts connections it sent to, but each viewer filters
+        // locally by its own position, so how many DISPLAYED it is
+        // deliberately unknowable here. Saying "sent to N" would imply N
+        // people saw it.
+        var n = (r && r.delivered_to_viewers) || 0;
+        var area = r && r.alert && r.alert.target_area;
+        var scope = area
+          ? (" Targeted to within " + area.radius_km + " km of the risk peak; viewers outside it will not see it.")
+          : " No target area available, so every viewer will see it.";
+        window.showToast(
+          "Advisory sent to " + n + (n === 1 ? " connected viewer." : " connected viewers.") + scope
+            + " In-app only -- no SMS or official alerting channel.",
+          "emergency_share");
+      })
+      .catch(function () {
+        window.showToast("Advisory dispatch failed: could not reach the backend.", "warning");
+      });
   };
+
+  // ---------------------------------------------------------------------------
+  // Broadcast Advisory: informational bulletin, not an interrupt.
+  //
+  // Distinct in KIND from the siren, not just severity -- posts to a
+  // persistent, readable log (/api/advisories) rather than pushing a live
+  // full-screen alert. A visitor who opens the dashboard an hour later can
+  // still read it; a siren that fired while their tab was closed is gone.
+  // ---------------------------------------------------------------------------
+  window.openAdvisoryModal = function () {
+    var modal = document.getElementById("modal-advisory");
+    if (modal) modal.classList.remove("hidden");
+  };
+
+  window.closeAdvisoryModal = function () {
+    var modal = document.getElementById("modal-advisory");
+    if (modal) modal.classList.add("hidden");
+  };
+
+  window.executeAdvisoryPost = function () {
+    var input = document.getElementById("advisory-message-input");
+    var message = input ? input.value.trim() : "";
+    window.closeAdvisoryModal();
+
+    var districts = window.StormSenseDistrictsData;
+    var worst = (Array.isArray(districts) && districts.length)
+      ? districts.reduce(function (a, b) {
+          return (b.overall_pct || 0) > (a.overall_pct || 0) ? b : a;
+        })
+      : null;
+
+    fetch(API_BASE + "/api/advisories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        district: worst ? worst.district : null,
+        level: worst ? worst.risk_level : null,
+        message: message || (worst
+          ? ("Conditions are being monitored for " + worst.district
+             + " (" + worst.overall_pct + "% model risk).")
+          : "Conditions are being monitored across West Bengal.")
+      })
+    })
+      .then(parseJson)
+      .then(function (r) {
+        if (input) input.value = "";
+        window.showToast(
+          r && r.posted
+            ? "Advisory published to the bulletin log."
+            : "Advisory could not be published.",
+          "history_edu");
+        if (typeof window.refreshAdvisoryFeed === "function") window.refreshAdvisoryFeed();
+      })
+      .catch(function () {
+        window.showToast("Advisory post failed: could not reach the backend.", "warning");
+      });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Operational Action: Disseminate Cell Alerts.
+  //
+  // Cell Broadcast (every phone in an area, no app needed) requires telecom
+  // and government alerting-authority access this project does not have.
+  // This logs the operator's request/decision -- an honest stand-in for the
+  // named capability -- rather than a silent no-op or a false delivery claim.
+  // ---------------------------------------------------------------------------
+  window.openOperationalActionModal = function () {
+    var modal = document.getElementById("modal-operational-action");
+    if (modal) modal.classList.remove("hidden");
+  };
+
+  window.closeOperationalActionModal = function () {
+    var modal = document.getElementById("modal-operational-action");
+    if (modal) modal.classList.add("hidden");
+  };
+
+  window.executeOperationalAction = function () {
+    var input = document.getElementById("operational-action-message-input");
+    var message = input ? input.value.trim() : "";
+    window.closeOperationalActionModal();
+
+    var districts = window.StormSenseDistrictsData;
+    var worst = (Array.isArray(districts) && districts.length)
+      ? districts.reduce(function (a, b) {
+          return (b.overall_pct || 0) > (a.overall_pct || 0) ? b : a;
+        })
+      : null;
+
+    fetch(API_BASE + "/api/operational-actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        district: worst ? worst.district : null,
+        level: worst ? worst.risk_level : null,
+        message: message || null
+      })
+    })
+      .then(parseJson)
+      .then(function (r) {
+        if (input) input.value = "";
+        window.showToast(
+          r && r.logged
+            ? "Request logged. No phone was contacted -- this app has no cell-broadcast access."
+            : "Could not log the request.",
+          "history_edu");
+      })
+      .catch(function () {
+        window.showToast("Log request failed: could not reach the backend.", "warning");
+      });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Incoming siren broadcasts.
+  //
+  // Subscribes to the backend's SSE stream so an operator's dispatch reaches
+  // every viewer with this page open, live. Reconnection is handled by the
+  // browser's own EventSource retry, so there is no custom retry loop here.
+  // ---------------------------------------------------------------------------
+  var _sirenAudioCtx = null;
+
+  function playSirenTone() {
+    // Synthesised rather than an audio file: no asset to ship or fail to load,
+    // and it works offline. Two-tone sweep, roughly a civil-defence cadence.
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      _sirenAudioCtx = _sirenAudioCtx || new Ctx();
+      var ctx = _sirenAudioCtx;
+      // Autoplay policies suspend the context until a user gesture; a viewer
+      // who has clicked anything on the page will hear it, others will not,
+      // and the visual alert carries the message either way.
+      if (ctx.state === "suspended") ctx.resume();
+
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.05);
+
+      var t = ctx.currentTime;
+      for (var i = 0; i < 4; i++) {
+        osc.frequency.setValueAtTime(680, t);
+        osc.frequency.linearRampToValueAtTime(440, t + 0.6);
+        t += 0.6;
+        osc.frequency.setValueAtTime(440, t);
+        osc.frequency.linearRampToValueAtTime(680, t + 0.6);
+        t += 0.6;
+      }
+      gain.gain.setValueAtTime(0.25, t - 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t);
+      osc.start(ctx.currentTime);
+      osc.stop(t + 0.05);
+    } catch (e) { /* sound is an enhancement; the overlay is the alert */ }
+  }
+
+  function showSirenAlert(alert, verdict) {
+    var isAdvance = verdict && verdict.tier === "advance";
+    var overlay = document.getElementById("siren-alert-overlay");
+
+    var heading = isAdvance ? "SEVERE WEATHER APPROACHING" : "SEVERE WEATHER ALERT";
+    var defaultMsg = isAdvance
+      ? "Conditions are forecast to deteriorate in your area."
+      : "A severe weather advisory has been issued.";
+
+    // The pre-alarm must not look or sound like the immediate alert: amber
+    // rather than red, no wailing tone. Weather that has not arrived yet
+    // should not read as an emergency in progress.
+    if (overlay) {
+      overlay.className = isAdvance
+        ? "fixed inset-0 z-[100] bg-amber-950/95 backdrop-blur-sm flex-col items-center justify-center p-6 flex"
+        : "fixed inset-0 z-[100] bg-red-950/95 backdrop-blur-sm flex-col items-center justify-center p-6 flex";
+
+      var iconEl = overlay.querySelector(".material-symbols-outlined");
+      if (iconEl) {
+        iconEl.textContent = isAdvance ? "schedule" : "emergency_home";
+        iconEl.className = "material-symbols-outlined text-7xl "
+          + (isAdvance ? "text-amber-300" : "text-red-300 animate-pulse");
+      }
+      var pulseEl = overlay.querySelector(".animate-pulse.bg-red-600\\/20, .animate-pulse.bg-amber-600\\/20");
+      if (pulseEl) pulseEl.className = isAdvance
+        ? "absolute inset-0 bg-amber-600/10 pointer-events-none"
+        : "absolute inset-0 animate-pulse bg-red-600/20 pointer-events-none";
+
+      setText("siren-alert-heading", heading);
+      setText("siren-alert-message", alert.message || defaultMsg);
+      setText("siren-alert-district", alert.district ? ("AREA: " + alert.district
+        + (alert.level ? "  ·  LEVEL: " + String(alert.level).toUpperCase() : "")) : "");
+      setText("siren-alert-time", alert.issued_at_utc
+        ? ("ISSUED: " + formatUtcDateTime(parseUtcIso(alert.issued_at_utc))) : "");
+
+      // Say WHY this viewer is seeing it -- a confirmed distance reads very
+      // differently from "we could not tell where you are", and conflating
+      // the two would overstate how targeted the alert is.
+      var why = "";
+      if (isAdvance) {
+        why = "Risk near you is forecast to rise"
+          + (verdict.rises_from_pct != null && verdict.peak_risk_pct != null
+              ? " from " + verdict.rises_from_pct + "% to " + verdict.peak_risk_pct + "%" : "")
+          + (verdict.eta_hours != null ? ", peaking about " + verdict.eta_hours + "h from the forecast issue time" : "")
+          + ". Conditions are not severe yet.";
+      } else if (verdict && verdict.reason === "distance") {
+        why = "You are " + Math.round(verdict.distance_km) + " km from the alert area centre ("
+          + verdict.radius_km + " km radius).";
+      } else if (verdict && verdict.reason === "location-unknown") {
+        why = "Your location is unavailable, so this alert is shown regardless of distance.";
+      } else if (verdict && verdict.reason === "untargeted") {
+        why = "Issued for the whole monitored region.";
+      }
+      setText("siren-alert-why", why);
+    }
+
+    // Tone only for the immediate tier. A pre-alarm that wails is a pre-alarm
+    // people learn to dismiss, and the next real one with it.
+    if (!isAdvance) playSirenTone();
+
+    // OS-level notification so a viewer on another tab still sees it. Only
+    // fires where permission was already granted -- never prompts here, since
+    // a permission dialog during an alert competes with the alert itself.
+    try {
+      if (window.Notification && Notification.permission === "granted") {
+        new Notification(isAdvance
+            ? "StormSense — Severe Weather Approaching"
+            : "StormSense — Severe Weather Alert", {
+          body: alert.message || defaultMsg,
+          tag: "stormsense-siren"
+        });
+      }
+    } catch (e) { /* notification support is optional */ }
+  }
+
+  window.dismissSirenAlert = function () {
+    var overlay = document.getElementById("siren-alert-overlay");
+    if (overlay) {
+      overlay.classList.add("hidden");
+      overlay.classList.remove("flex");
+    }
+  };
+
+  // Great-circle distance in km. Used to decide, ON THIS DEVICE, whether this
+  // viewer is inside an alert's target circle.
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    var R = 6371;
+    var toRad = function (d) { return d * Math.PI / 180; };
+    var dLat = toRad(lat2 - lat1);
+    var dLon = toRad(lon2 - lon1);
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2))
+      * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  /**
+   * Whether THIS viewer should see a given broadcast.
+   *
+   * The filtering is deliberately local: the alert carries its target circle,
+   * and the browser compares it against a position that never leaves the
+   * device. The server neither receives nor stores any viewer's location.
+   *
+   * Shows the alert when the target area is unknown, and when this viewer's
+   * own location is unknown (geolocation denied or unavailable). An alert
+   * suppressed because we could not confirm the viewer is outside the zone
+   * would be a missed warning -- the failure mode has to be an extra alert,
+   * never a silent one.
+   */
+  function sirenAppliesHere(alert) {
+    var area = alert && alert.target_area;
+    var advance = alert && alert.advance_area;
+
+    if ((!area || area.center_lat == null) && (!advance || advance.center_lat == null)) {
+      return { show: true, tier: "immediate", reason: "untargeted" };
+    }
+    var loc = window.StormSenseUserLocation;
+    if (!loc || loc.lat == null || loc.lon == null) {
+      return { show: true, tier: "immediate", reason: "location-unknown" };
+    }
+
+    // Immediate wins over advance when a viewer is inside both circles: the
+    // thing happening now outranks the thing forecast for later.
+    if (area && area.center_lat != null) {
+      var km = haversineKm(loc.lat, loc.lon, area.center_lat, area.center_lon);
+      if (km <= (Number(area.radius_km) || 0)) {
+        return { show: true, tier: "immediate", reason: "distance",
+                 distance_km: km, radius_km: Number(area.radius_km) || 0 };
+      }
+    }
+    if (advance && advance.center_lat != null) {
+      var akm = haversineKm(loc.lat, loc.lon, advance.center_lat, advance.center_lon);
+      if (akm <= (Number(advance.radius_km) || 0)) {
+        return { show: true, tier: "advance", reason: "distance",
+                 distance_km: akm, radius_km: Number(advance.radius_km) || 0,
+                 eta_hours: advance.eta_hours,
+                 peak_risk_pct: advance.peak_risk_pct,
+                 rises_from_pct: advance.rises_from_pct };
+      }
+    }
+    return { show: false, reason: "outside-all-zones" };
+  }
+
+  function subscribeToSirenStream() {
+    if (!window.EventSource) return;
+    try {
+      var es = new EventSource(API_BASE + "/api/siren/stream");
+      es.addEventListener("siren", function (ev) {
+        var alert;
+        try { alert = JSON.parse(ev.data) || {}; } catch (e) { alert = {}; }
+        var verdict = sirenAppliesHere(alert);
+        if (!verdict.show) {
+          console.info("StormSense: siren broadcast not applicable here ("
+            + Math.round(verdict.distance_km) + "km from the alert area, radius "
+            + verdict.radius_km + "km).");
+          return;
+        }
+        showSirenAlert(alert, verdict);
+      });
+    } catch (e) { /* stream unavailable; dashboard still functions */ }
+  }
+
+  // Ask once, up front and outside any alert, so permission is already settled
+  // by the time a real broadcast arrives.
+  function requestNotificationPermissionOnce() {
+    try {
+      if (window.Notification && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    } catch (e) { /* optional */ }
+  }
 
   window.showToast = function (msg, iconType) {
     var toast = document.getElementById("toast-notification");
@@ -5552,6 +6042,14 @@
             b.title = "Valid " + String(info.served_valid_time_utc || "").slice(11, 16) +
               "Z, from the " + info.source_lead_hours + "h forecast lead" +
               (err ? " (" + (err > 0 ? "+" : "") + err.toFixed(2) + "h from the target)" : "");
+          } else if (b.classList.contains("bg-cyan-600")) {
+            // This IS the actively selected horizon -- do not dim it. The
+            // "unavailable" fact is still recorded (data-unavailable + title),
+            // just not rendered as reduced opacity on the one button the
+            // viewer is currently looking at.
+            b.setAttribute("data-unavailable", "1");
+            b.style.removeProperty("opacity");
+            b.title = info.reason || "Not available from the current analysis.";
           } else {
             b.setAttribute("data-unavailable", "1");
             b.style.opacity = "0.45";
@@ -5564,6 +6062,11 @@
   window.refreshWallclockHorizonAvailability = refreshWallclockHorizonAvailability;
 
   document.addEventListener("DOMContentLoaded", function () {
+    // Live operator-broadcast alerts, and the notification permission they may
+    // use. Both are independent of the dashboard's data loading.
+    subscribeToSirenStream();
+    requestNotificationPermissionOnce();
+
     // Learn which forecast horizons the LOADED model serves, so apiLeadHours()
     // validates against the real set instead of a hardcoded list. Fire-and-
     // forget: until it resolves, apiLeadHours() uses its documented fallback,
