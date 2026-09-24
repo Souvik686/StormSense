@@ -206,26 +206,37 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
     </div>
   </div>
 
-  <!-- Live Critical Alert Box: Stage 4 Warning -->
-  <div class="p-4 rounded-2xl bg-gradient-to-b from-red-950/60 via-red-900/20 to-slate-950/80 border border-red-500/40 shadow-xl shadow-red-950/40 relative overflow-hidden backdrop-blur-xl group hover:border-red-500/60 transition-all">
-    <div class="absolute -right-8 -top-8 size-28 bg-red-500/15 rounded-full blur-2xl pointer-events-none group-hover:bg-red-500/25 transition-all"></div>
+  <!-- AI Nowcast Notice: defaults to the CALM state, not an alarm.
+       _paintSidebarAlert() in app.js repaints this from real district data,
+       but that fetch is a Promise.all() of four requests -- real network
+       latency, so this card is on screen exactly as shipped here for however
+       long that takes on every load. It used to default to the red/urgent
+       "West Bengal Convective Watch" markup with the siren button always
+       visible, so a calm dashboard (green everywhere else) opened with what
+       read as an active emergency notice above a lit-up evacuation button,
+       until the real (usually calm) data arrived a moment later. Matches the
+       STYLES.green branch in _paintSidebarAlert exactly, so there is nothing
+       to flash TO -- the calm case now needs no repaint at all, and only an
+       actually elevated risk changes what is on screen. -->
+  <div class="p-4 rounded-2xl bg-gradient-to-b from-emerald-950/50 via-emerald-900/15 to-slate-950/80 border border-emerald-500/30 shadow-xl shadow-black/30 relative overflow-hidden backdrop-blur-xl group hover:border-emerald-500/50 transition-all">
+    <div class="absolute -right-8 -top-8 size-28 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-emerald-500/25 transition-all"></div>
     <div class="flex items-center justify-between mb-2.5 relative z-10">
       <div class="flex items-center gap-2">
         <span class="relative flex size-2.5">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-          <span class="relative inline-flex rounded-full size-2.5 bg-red-500"></span>
+          <span class="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-0"></span>
+          <span class="relative inline-flex rounded-full size-2.5 bg-emerald-400"></span>
         </span>
         <span class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 font-mono">AI Nowcast Notice</span>
       </div>
       <span class="text-[9px] text-cyan-200 bg-cyan-500/20 px-2 py-0.5 rounded-full font-mono font-bold border border-cyan-500/40 tracking-wider">AI FORECAST</span>
     </div>
     <div class="text-white font-bold text-xs mb-1.5 leading-snug relative z-10" id="bind-sidebar-alert-title">
-      West Bengal Convective Watch
+      No Active Watch
     </div>
     <p class="text-[11px] text-slate-300 leading-relaxed mb-3.5 font-normal relative z-10" id="bind-sidebar-alert-body">
-      AI severe weather forecast active for West Bengal.
+      Checking current model risk for West Bengal…
     </p>
-    <button class="btn-siren-trigger w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-bold shadow-lg shadow-red-600/30 hover:shadow-red-600/50 transition-all active:scale-[0.98] cursor-pointer border border-red-500/40 relative z-10 group" id="btn-dispatch-siren-side">
+    <button class="btn-siren-trigger hidden w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-bold shadow-lg shadow-red-600/30 hover:shadow-red-600/50 transition-all active:scale-[0.98] cursor-pointer border border-red-500/40 relative z-10 group" id="btn-dispatch-siren-side">
       <span class="material-symbols-outlined text-sm group-hover:animate-pulse">emergency_share</span>
       <span class="tracking-wide">DISPATCH EVACUATION SIREN</span>
     </button>
@@ -456,7 +467,7 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <span class="text-[11px] font-bold font-mono tracking-wider uppercase text-slate-400" id="kpi-ts-scope">Atmospheric Hazard · West Bengal peak</span>
 <h3 class="text-white font-bold text-base mt-0.5">Thunderstorm</h3>
 </div>
-<span id="kpi-ts-level" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">OPERATIONAL</span>
+<span id="kpi-ts-level" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">NORMAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
 <span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-ts-value">...</span>
@@ -465,12 +476,12 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 </div>
 <div>
 <div id="kpi-ts-bars" class="w-full h-9 flex items-end gap-1.5 mb-3 pt-1">
-<div class="flex-1 bg-amber-500/20 rounded-md h-3"></div>
-<div class="flex-1 bg-amber-500/30 rounded-md h-4"></div>
-<div class="flex-1 bg-amber-500/45 rounded-md h-5"></div>
-<div class="flex-1 bg-amber-500/60 rounded-md h-6"></div>
-<div class="flex-1 bg-amber-500/80 rounded-md h-7"></div>
-<div class="flex-1 bg-amber-500 rounded-md h-9"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-3"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-4"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-5"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-6"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-7"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-9"></div>
 </div>
 <div class="flex items-center justify-between text-[11px] text-slate-400 pt-3 border-t border-slate-800/80">
 <span id="kpi-ts-detail">LIVE</span>
@@ -487,7 +498,7 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <span class="text-[11px] font-bold font-mono tracking-wider uppercase text-slate-400" id="kpi-rain-scope">Precipitation Hazard · West Bengal peak</span>
 <h3 class="text-white font-bold text-base mt-0.5">Heavy Rainfall</h3>
 </div>
-<span id="kpi-rain-level" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">OPERATIONAL</span>
+<span id="kpi-rain-level" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">NORMAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
 <span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-rain-value">...</span>
@@ -496,12 +507,12 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 </div>
 <div>
 <div id="kpi-rain-bars" class="w-full h-9 flex items-end gap-1.5 mb-3 pt-1">
-<div class="flex-1 bg-orange-500/20 rounded-md h-2.5"></div>
-<div class="flex-1 bg-orange-500/35 rounded-md h-3"></div>
-<div class="flex-1 bg-orange-500/50 rounded-md h-4.5"></div>
-<div class="flex-1 bg-orange-500/65 rounded-md h-6"></div>
-<div class="flex-1 bg-orange-500/80 rounded-md h-7"></div>
-<div class="flex-1 bg-orange-500 rounded-md h-8"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-2.5"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-3"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-4.5"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-6"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-7"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-8"></div>
 </div>
 <div class="flex items-center justify-between text-[11px] text-slate-400 pt-3 border-t border-slate-800/80">
 <span id="kpi-rain-detail">LIVE</span>
@@ -518,7 +529,7 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <span class="text-[11px] font-bold font-mono tracking-wider uppercase text-slate-400" id="kpi-ff-scope">Hydrological Hazard · West Bengal peak</span>
 <h3 class="text-white font-bold text-base mt-0.5">Flash-Flood Risk Proxy</h3>
 </div>
-<span id="kpi-flood-level" class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">OPERATIONAL</span>
+<span id="kpi-flood-level" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 text-[11px] font-bold font-mono uppercase tracking-wider">NORMAL</span>
 </div>
 <div class="flex items-baseline justify-between mb-3">
 <span class="text-4xl font-extrabold text-white tracking-tight font-mono" id="kpi-flood-value">...</span>
@@ -527,12 +538,12 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 </div>
 <div>
 <div id="kpi-flood-bars" class="w-full h-9 flex items-end gap-1.5 mb-3 pt-1">
-<div class="flex-1 bg-amber-500/25 rounded-md h-3"></div>
-<div class="flex-1 bg-amber-500/40 rounded-md h-4"></div>
-<div class="flex-1 bg-amber-500/55 rounded-md h-5"></div>
-<div class="flex-1 bg-amber-500/70 rounded-md h-7"></div>
-<div class="flex-1 bg-amber-500/85 rounded-md h-8"></div>
-<div class="flex-1 bg-amber-500 rounded-md h-9"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-3"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-4"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-5"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-7"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-8"></div>
+<div class="flex-1 bg-slate-700/30 rounded-md h-9"></div>
 </div>
 <div class="flex items-center justify-between text-[11px] text-slate-400 pt-3 border-t border-slate-800/80">
 <span id="kpi-flood-detail">LIVE</span>
@@ -540,28 +551,41 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 </div>
 </div>
 </div>
-<!-- Card 4: Overall -->
-<div class="rounded-2xl p-6 bg-gradient-to-br from-slate-900 via-slate-900/80 to-slate-900/90 border-2 border-amber-500/40 backdrop-blur-xl relative overflow-hidden shadow-2xl flex flex-col justify-between">
-<div class="absolute -right-8 -top-8 size-32 bg-amber-500/10 rounded-full blur-3xl"></div>
+<!-- Card 4: Overall. Defaults to NORMAL/green, matching what paintForecastCards()
+     actually paints for a calm summary -- the amber "OPERATIONAL / WATCH /
+     MONITOR RADAR / 41% filled" markup this shipped with looked like a real,
+     specific, already-elevated reading, so it was on screen (looking like an
+     active watch) for however long the first fetch took, every load. -->
+<div class="rounded-2xl p-6 bg-gradient-to-br from-slate-900 via-slate-900/80 to-slate-900/90 border-2 border-emerald-500/40 backdrop-blur-xl relative overflow-hidden shadow-2xl flex flex-col justify-between">
+<div class="absolute -right-8 -top-8 size-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
 <div>
 <div class="flex items-start justify-between mb-4">
 <div>
-<span class="text-[11px] font-bold font-mono tracking-wider uppercase text-amber-300" id="kpi-overall-category">Combined Index</span>
+<span class="text-[11px] font-bold font-mono tracking-wider uppercase text-emerald-300" id="kpi-overall-category">Combined Index</span>
 <h3 class="text-white font-bold text-base mt-0.5" id="kpi-overall-title">Overall Hazard Level</h3>
 </div>
-<span id="kpi-overall-level" class="px-2.5 py-1 rounded-lg bg-amber-600 text-slate-950 text-[11px] font-extrabold font-mono uppercase tracking-wider">OPERATIONAL</span>
+<span id="kpi-overall-level" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 text-[11px] font-extrabold font-mono uppercase tracking-wider">NORMAL</span>
 </div>
-<div class="flex items-baseline justify-between mb-3">
+<!-- Action text (id=kpi-overall-action) is real, longer text at runtime --
+     "WARNING - Activate Emergency Response Protocol", "ALERT - Prepare Civil
+     Defense & Field Units", etc (see getOverallAction() in app.js). Sharing a
+     flex row with the 4xl value squeezed/overlapped it against the
+     percentage for every one of those strings, not just this card's -- put
+     on its own line below instead, with room to wrap without crowding
+     anything. -->
+<div class="flex items-baseline mb-2">
 <span class="text-4xl font-black text-white tracking-tight font-mono" id="kpi-overall-value">...</span>
-<span id="kpi-overall-action" class="px-2 py-1 rounded bg-amber-500/20 border border-amber-500/40 text-amber-100 text-xs font-extrabold uppercase font-mono tracking-wide">MONITOR RADAR</span>
+</div>
+<div class="mb-3">
+<span id="kpi-overall-action" class="inline-block px-2 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-100 text-xs font-extrabold uppercase font-mono tracking-wide">NORMAL - Nominal Observation</span>
 </div>
 </div>
 <div>
 <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden p-0.5 border border-slate-700/60 mb-3">
-<div id="kpi-overall-bar" class="bg-gradient-to-r from-emerald-500 via-amber-500 to-orange-500 h-full rounded-full" style="width:41%"></div>
+<div id="kpi-overall-bar" class="bg-gradient-to-r from-emerald-500 via-amber-500 to-orange-500 h-full rounded-full" style="width:1%"></div>
 </div>
-<div class="flex items-center justify-between text-[11px] text-slate-300 pt-3 border-t border-amber-500/30">
-<span class="font-bold text-amber-300" id="kpi-overall-stage">WATCH</span>
+<div class="flex items-center justify-between text-[11px] text-slate-300 pt-3 border-t border-emerald-500/30">
+<span class="font-bold text-emerald-300" id="kpi-overall-stage">NORMAL</span>
 <span class="text-slate-400 font-medium" id="kpi-overall-area">West Bengal</span>
 </div>
 </div>
@@ -625,12 +649,22 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
      offset from NOW. Every value is written at runtime from the backend's
      authoritative reference instant -- nothing here is hardcoded. -->
 <div id="time-context-container" class="flex items-center bg-slate-950/80 px-3.5 py-2 rounded-xl border border-slate-700 min-w-[280px]">
-<div id="now-validity-box" class="hidden flex-col font-mono leading-tight">
+<!-- NOW is the button pre-selected below (bg-cyan-600 on the NOW button),
+     so this box -- not forecast-validity-box -- must be the one visible by
+     default. It used to start "hidden" here with forecast-validity-box
+     starting "flex", and nothing corrected that until setForecastHorizon()
+     ran inside loadDashboardData().then(...) -- a full network round trip
+     after first paint. That left the "+2H FORECAST" box visibly on screen
+     for however long that fetch took, every single load, before flipping to
+     this one. Defaulting the classes correctly here removes the flash
+     entirely: the right box is shown from the very first paint, with no
+     dependency on any JS running at all. -->
+<div id="now-validity-box" class="flex flex-col font-mono leading-tight">
 <span class="text-[10px] font-extrabold text-emerald-400 tracking-wider">CURRENT CONDITIONS</span>
 <span class="text-sm font-extrabold text-white tracking-tight" id="nv-obs-time-big">--:-- IST</span>
 <span class="text-[10px] text-slate-400">OBSERVED <span id="nv-obs-time" class="text-slate-300">--:--</span> · AGE <span id="nv-age" class="text-slate-300">--</span></span>
 </div>
-<div id="forecast-validity-box" class="flex flex-col font-mono leading-tight">
+<div id="forecast-validity-box" class="hidden flex-col font-mono leading-tight">
 <span class="text-[10px] font-extrabold text-cyan-400 tracking-wider" id="fv-horizon-title">+2H FORECAST</span>
 <!-- The exact forecast valid time (reference instant + horizon), in IST. -->
 <span class="text-sm font-extrabold text-white tracking-tight" id="fv-valid-ist">--:-- IST</span>
@@ -728,8 +762,8 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <div class="mt-1" id="data-freshness"></div>
 <div class="text-xs text-slate-500 mt-1">Last Updated: <span id="last-updated-time">--:--</span></div>
 </div>
-<span id="profile-level" class="px-3 py-1.5 rounded-xl bg-amber-600 text-slate-950 text-xs font-black font-mono uppercase tracking-wider flex items-center gap-1.5">
-<span class="size-2 bg-white rounded-full"></span> OPERATIONAL
+<span id="profile-level" class="px-3 py-1.5 rounded-xl bg-emerald-600 text-slate-950 text-xs font-black font-mono uppercase tracking-wider flex items-center gap-1.5">
+<span class="size-2 bg-emerald-400 rounded-full animate-pulse"></span> LIVE MONITORING
               </span>
 </div>
 <!-- SECTION 2: AI FORECAST RISK at the user's coordinates.

@@ -38,16 +38,11 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 
 # ✨ Features
 
-## 🛰️ Live & Historical Modes
-- **Live mode:** Fetches the newest available NOAA GFS analysis, harmonizes it onto the model's grid, and runs real inference.
-- **Historical mode:** Replays a single frozen, real event (Cyclone Remal, 26 May 2024) using the model's actual ERA5-input test-time forecast.
-
-<p align="center"><img src="frontend/static/screenshots/dashboard-historical-remal.png" alt="Historical case study: Cyclone Remal replay" width="85%"></p>
-
 ## 🧠 Advanced Machine Learning
 - **Model:** SevereWeatherNetV2 — a tri-stream ConvGRU feeding a shared multi-horizon decoder (781,889 parameters).
 - **Outputs:** Severe-weather probability, 3-hour rainfall (mm), and a derived flash-flood risk proxy.
 - **Lead Times:** +2h, +3h, +4h, +5h, +6h native model leads.
+- **Live inference:** Fetches the newest available NOAA GFS analysis, harmonizes it onto the model's grid, and runs real inference — this is the primary mode the dashboard runs in.
 
 ## 📊 Interactive Dashboard
 - **Wall-clock horizons:** NOW, +2h, +4h, +6h dynamic UI buttons.
@@ -68,6 +63,11 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 <td align="center"><sub>XAI atmospheric attribution</sub></td>
 </tr>
 </table>
+
+## 🕰️ Historical Case Study (secondary)
+A frozen replay of Cyclone Remal (26 May 2024), using the model's real ERA5-input test-time forecast for that event. Its purpose: when live weather over West Bengal happens to be calm at demo time, this lets you show the model actually detecting a genuine severe-weather event from past data, rather than only an uneventful live feed.
+
+<p align="center"><img src="frontend/static/screenshots/dashboard-historical-remal.png" alt="Historical case study: Cyclone Remal replay" width="85%"></p>
 
 ---
 
