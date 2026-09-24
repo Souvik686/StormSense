@@ -1695,6 +1695,7 @@
         window.StormSenseCurrentSummary = summary;
         var districts = results[2];
         var cells = results[3];
+        var xai = results[4];
 
         if (districts && districts.length) window.StormSenseDistrictsData = districts;
 
@@ -1720,6 +1721,14 @@
           renderHighRiskCells(cells);
           if (window.stormSenseMap) renderHotspotBeacons(window.stormSenseMap, cells);
         }
+
+        // Fetched above but previously discarded: this left the XAI Feature
+        // Attribution panel showing whatever the LAST mode painted -- the
+        // historical case study's factors stayed on screen after switching to
+        // live, through every 5-minute auto-refresh, until the operator
+        // happened to click a horizon button (setForecastHorizon calls
+        // renderXai itself, which is why that path never showed the bug).
+        if (xai && typeof renderXai === "function") renderXai(xai);
 
         // Repaint the surface for the CURRENT horizon; never re-fit the map, so
         // the operator's pan/zoom survives the refresh.
@@ -3819,9 +3828,9 @@
 
     var stateLayer = L.geoJSON(geojsonData, {
       style: {
-        color: "#000000",
-        weight: 2.2,
-        opacity: 0.95,
+        color: "#38bdf8",
+        weight: 2,
+        opacity: 0.9,
         fillColor: "transparent",
         fillOpacity: 0
       },
@@ -4861,6 +4870,23 @@
            map.getContainer().id === "radar-map-container";
   }
 
+  // RainViewer's public tiles have no real detail past zoom ~7 (confirmed by
+  // probing their API directly: zoom 8+ returns a flat placeholder). Drawing
+  // it as an L.tileLayer with maxNativeZoom upscaling stretches each 256px
+  // tile INDEPENDENTLY, so the seams between adjacent stretched tiles show up
+  // as a visible grid cutting through what should be one continuous rain
+  // blob -- exactly the "grid lines" artifact reported.
+  //
+  // Fixed the same way this project already renders every other spatial
+  // field (/api/nowcast/risk-surface, /api/historical/analysis-surface):
+  // one server-stitched PNG, served as a single L.imageOverlay. A client-side
+  // canvas mosaic was tried first and dropped -- RainViewer's tile host does
+  // not send CORS headers, which taints the canvas and makes toDataURL()
+  // throw, so the stitching has to happen server-side (see
+  // /api/radar/mosaic in backend/main.py) where cross-origin fetches are not
+  // restricted.
+  var RADAR_MOSAIC_BOUNDS = [[19.0, 83.0], [29.0, 91.0]];
+
   async function loadRainViewerRadar(map) {
     if (window.stormSenseMode === "historical") {
       console.warn("loadRainViewerRadar: blocked in historical mode to prevent data contamination.");
@@ -4881,32 +4907,32 @@
     try {
         if (statusEl) statusEl.textContent = "RADAR LOADING";
 
-        var response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
-        if (!response.ok) throw new Error("RainViewer API returned HTTP " + response.status);
-        
-        var data = await response.json();
-        if (!data.radar || !data.radar.past || !data.radar.past.length) throw new Error("No radar frames available.");
-        
-        var latestFrame = data.radar.past[data.radar.past.length - 1];
-        
+        // The backend looks up RainViewer's latest frame and stitches the
+        // mosaic itself (see /api/radar/mosaic), so this is one request
+        // instead of a client-side tile-fetch loop, and returns the scan
+        // timestamp in a header for the "Last Scan" line below.
+        var mosaicUrl = API_BASE + "/api/radar/mosaic?t=" + Date.now();
+        var response = await fetch(mosaicUrl);
+        if (!response.ok) throw new Error("Radar mosaic endpoint returned HTTP " + response.status);
+        var scanTimeHeader = response.headers.get("X-Scan-Time-Unix");
+        var blob = await response.blob();
+        var imageUrl = URL.createObjectURL(blob);
+
         if (radarLayer && map) {
             map.removeLayer(radarLayer);
             radarLayer = null;
         }
 
-        var tileUrl = data.host + latestFrame.path + "/256/{z}/{x}/{y}/2/1_1.png";
-
         if (map) {
-            radarLayer = L.tileLayer(tileUrl, {
+            radarLayer = L.imageOverlay(imageUrl, RADAR_MOSAIC_BOUNDS, {
                 opacity: 0.65,
                 zIndex: 400,
-                errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
-                maxNativeZoom: 7,
-                maxZoom: 16,
+                interactive: false,
                 attribution: 'Radar data by <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>'
             });
             radarLayer.addTo(map);
         }
+        var latestFrame = { time: scanTimeHeader ? Number(scanTimeHeader) : Math.floor(Date.now() / 1000) };
 
         var sptLive = document.getElementById("spatial-panel-title");
         if (sptLive) sptLive.textContent = "AI Spatial Forecast";
@@ -4964,8 +4990,29 @@
       }
       if (ri) ri.textContent = "ERA5 reanalysis · observed rainfall rate (mm/h) · not a forecast";
       if (ru) ru.textContent = "Analysis 26 May 2024 · 17:30 IST";
+      // initRadarMap() only paints this surface on the map's FIRST build
+      // (it returns early on every later call because window.stormSenseRadarMap
+      // already exists). A visitor who opened this view once in live mode,
+      // switched to historical, and came back here would keep the map object
+      // from that first build with no rainfall overlay ever drawn on it --
+      // just the state border, as seen in the "blue rainfall over South WB is
+      // missing" report. Painting it here too means every switch into
+      // historical mode gets the surface, not only a brand-new map.
+      if (map && typeof renderHistoricalAnalysisSurface === "function") {
+        renderHistoricalAnalysisSurface(map);
+      }
     } else {
       if (spt) spt.textContent = "AI Spatial Forecast & Live Radar";
+      // The historical branch's ERA5 rainfall overlay (_historicalAnalysisOverlay)
+      // is a separate Leaflet image layer from the RainViewer tiles below, so
+      // loadRainViewerRadar() adding live tiles on top never removed it -- a
+      // switch to live left the frozen 2024 Cyclone Remal rainfall field
+      // permanently layered under the live radar. Historical -> live must
+      // drop it explicitly, the same way live -> historical explicitly drops
+      // RainViewer tiles above.
+      if (map && typeof removeHistoricalAnalysisSurface === "function") {
+        removeHistoricalAnalysisSurface(map);
+      }
       if (map && typeof loadRainViewerRadar === "function") loadRainViewerRadar(map);
     }
   }
@@ -5019,17 +5066,13 @@
         // -- StormSense holds no archived Remal radar imagery, so this must
         // never be labelled as one. No live radar is fetched in historical
         // mode (the else-branch below).
-        var msg = L.divIcon({
-            className: 'radar-archive-msg',
-            html: '<div style="color:#00e5ff; background:rgba(0,0,0,0.85); padding:10px; border:1px solid #00e5ff; text-align:center; font-family:monospace; line-height:1.45;">'
-                + '<b>OBSERVED RAINFALL FIELD · t=0</b><br/>'
-                + 'Cyclone Remal · analysis 26 May 2024 17:30 IST<br/>'
-                + '<span style="opacity:.85">ERA5 reanalysis · mm/hour · not a forecast</span></div>',
-            iconSize: [340, 74]
-        });
-        // Kept north of ~26N: Remal's rainfall sits over the southern coast, and
-        // a caption centred mid-domain covered the very field it describes.
-        L.marker([26.6, 87.2], {icon: msg}).addTo(map);
+        //
+        // The in-map caption marker that used to sit here (an "OBSERVED
+        // RAINFALL FIELD · t=0 / Cyclone Remal · analysis ..." box pinned at
+        // [26.6, 87.2]) is removed: it duplicated the same three facts the
+        // panel header below already states (spatial-panel-title,
+        // radar-info, radar-last-update) while sitting directly on top of
+        // the rainfall field it was describing, in northern WB near Sikkim.
         // Radar HUD must not imply a live feed is loading in a frozen replay.
         // Panel identity must describe what is actually rendered: the
         // StormSense historical model field, not a radar product.
@@ -5100,6 +5143,9 @@
           window.stormSenseRadarMap.invalidateSize();
         }
       }, 150);
+    }
+    if (targetView === "advisories" && typeof window.refreshAdvisoryFeed === "function") {
+      window.refreshAdvisoryFeed();
     }
 
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -5377,9 +5423,40 @@
     if (modal) modal.classList.add("hidden");
   };
 
-  window.executeSirenDispatch = function () {
-    window.closeSirenModal();
+  // ---------------------------------------------------------------------------
+  // ADMIN GATE for the three operator actions (siren dispatch, advisory post,
+  // cell-alert dissemination request). Checked server-side too (see
+  // _require_admin in main.py) -- this is not merely a UI lock, a caller
+  // hitting the API directly still needs the password. On a wrong/missing
+  // password the modal stays open and shows the inline error instead of
+  // closing, so the operator can retry without re-filling the form.
+  // ---------------------------------------------------------------------------
+  function postAdminAction(url, fields, passwordInputId, errorElId, onSuccess, onNetworkError) {
+    var pwEl = document.getElementById(passwordInputId);
+    var errEl = document.getElementById(errorElId);
+    if (errEl) errEl.classList.add("hidden");
+    var password = pwEl ? pwEl.value : "";
 
+    fetch(API_BASE + url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ admin_password: password }, fields))
+    })
+      .then(function (res) {
+        if (res.status === 403) {
+          if (errEl) errEl.classList.remove("hidden");
+          return null;
+        }
+        if (!res.ok) throw new Error("http_" + res.status);
+        return res.json().catch(function () { return null; });
+      })
+      .then(function (r) {
+        if (r) onSuccess(r);
+      })
+      .catch(onNetworkError);
+  }
+
+  window.executeSirenDispatch = function () {
     // The worst district in the merged 0-6h view, so the broadcast names what
     // the dashboard is actually flagging rather than a placeholder.
     var districts = window.StormSenseDistrictsData;
@@ -5389,38 +5466,40 @@
         })
       : null;
 
-    fetch(API_BASE + "/api/siren/dispatch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        district: worst ? worst.district : null,
-        level: worst ? worst.risk_level : null,
-        message: worst
-          ? ("Severe convective weather advisory for " + worst.district
-             + " (" + worst.overall_pct + "% model risk).")
-          : "Severe convective weather advisory issued."
-      })
-    })
-      .then(parseJson)
-      .then(function (r) {
-        // Report the REAL reach, and no more than is actually known: the
-        // server counts connections it sent to, but each viewer filters
-        // locally by its own position, so how many DISPLAYED it is
-        // deliberately unknowable here. Saying "sent to N" would imply N
-        // people saw it.
-        var n = (r && r.delivered_to_viewers) || 0;
-        var area = r && r.alert && r.alert.target_area;
-        var scope = area
-          ? (" Targeted to within " + area.radius_km + " km of the risk peak; viewers outside it will not see it.")
-          : " No target area available, so every viewer will see it.";
-        window.showToast(
-          "Advisory sent to " + n + (n === 1 ? " connected viewer." : " connected viewers.") + scope
-            + " In-app only -- no SMS or official alerting channel.",
-          "emergency_share");
-      })
-      .catch(function () {
-        window.showToast("Advisory dispatch failed: could not reach the backend.", "warning");
-      });
+    postAdminAction("/api/siren/dispatch", {
+      district: worst ? worst.district : null,
+      level: worst ? worst.risk_level : null,
+      message: worst
+        ? ("Severe convective weather advisory for " + worst.district
+           + " (" + worst.overall_pct + "% model risk).")
+        : "Severe convective weather advisory issued."
+    }, "siren-admin-password", "siren-admin-password-error", function (r) {
+      window.closeSirenModal();
+      // Report the REAL reach, and no more than is actually known: the
+      // server counts connections it sent to, but each viewer filters
+      // locally by its own position, so how many DISPLAYED it is
+      // deliberately unknowable here. Saying "sent to N" would imply N
+      // people saw it.
+      var n = (r && r.delivered_to_viewers) || 0;
+      var area = r && r.alert && r.alert.target_area;
+      var scope = area
+        ? (" Targeted to within " + area.radius_km + " km of the risk peak; viewers outside it will not see it.")
+        : " No target area available, so every viewer will see it.";
+      window.showToast(
+        "Siren sent to " + n + (n === 1 ? " connected viewer." : " connected viewers.") + scope
+          + " In-app only -- no SMS or official alerting channel.",
+        "emergency_share");
+      // Show and sound it on the DISPATCHING admin's own tab immediately,
+      // rather than only through the SSE round-trip: that path applies the
+      // same distance filter as every other viewer (sirenAppliesHere), which
+      // silently skipped the operator's own screen whenever their device
+      // happened to be outside the alert's target circle. The admin who just
+      // triggered a broadcast must always see and hear it themselves.
+      showSirenAlert(r && r.alert ? r.alert : { message: "Advisory sent." },
+        { tier: "immediate", reason: "own-dispatch" });
+    }, function () {
+      window.showToast("Siren dispatch failed: could not reach the backend.", "warning");
+    });
   };
 
   // ---------------------------------------------------------------------------
@@ -5430,7 +5509,99 @@
   // persistent, readable log (/api/advisories) rather than pushing a live
   // full-screen alert. A visitor who opens the dashboard an hour later can
   // still read it; a siren that fired while their tab was closed is gone.
+  //
+  // WHERE VIEWERS SEE IT: the "Broadcast Advisory Log" panel on the District
+  // Advisories view (#advisory-log-list), populated by this function. Built
+  // with DOM nodes and textContent rather than innerHTML string interpolation
+  // because the message is admin-supplied free text rendered into every
+  // viewer's page -- textContent can never be parsed as markup.
   // ---------------------------------------------------------------------------
+  window.refreshAdvisoryFeed = function () {
+    var root = document.getElementById("advisory-log-list");
+    if (!root) return;
+    fetch(API_BASE + "/api/advisories?limit=50")
+      .then(parseJson)
+      .then(function (r) {
+        // The backend already excludes anything past its 4h TTL (see
+        // _prune_expired_advisories in main.py), so this list is already
+        // correct at fetch time; the client-side timer below only handles a
+        // viewer who leaves this view open PAST an already-loaded item's
+        // expiry, which a one-shot fetch could never catch on its own.
+        var items = (r && Array.isArray(r.advisories)) ? r.advisories : [];
+        root.innerHTML = "";
+        if (!items.length) {
+          var empty = document.createElement("div");
+          empty.className = "text-sm text-slate-500 italic px-1";
+          empty.textContent = "No advisories published yet.";
+          root.appendChild(empty);
+          return;
+        }
+        items.forEach(function (a) {
+          var card = document.createElement("div");
+          card.className = "flex flex-col gap-1.5 p-4 rounded-xl bg-slate-900/60 border border-slate-800";
+          if (a.expires_at_utc) card.dataset.expiresAtUtc = a.expires_at_utc;
+
+          var head = document.createElement("div");
+          head.className = "flex items-center justify-between gap-3 text-[11px] font-mono text-slate-400";
+          var headLeft = document.createElement("span");
+          headLeft.className = "text-amber-300 font-bold";
+          headLeft.textContent = (a.district || "West Bengal")
+            + (a.level ? " · " + String(a.level).toUpperCase() : "");
+          var headRight = document.createElement("span");
+          headRight.textContent = a.issued_at_utc
+            ? formatUtcDateTime(parseUtcIso(a.issued_at_utc)) : "";
+          head.appendChild(headLeft);
+          head.appendChild(headRight);
+
+          var msg = document.createElement("p");
+          msg.className = "text-sm text-slate-200";
+          msg.textContent = a.message || "";
+
+          var expiry = document.createElement("div");
+          expiry.className = "text-[10px] text-slate-500 expiry-countdown";
+          card.appendChild(head);
+          card.appendChild(msg);
+          card.appendChild(expiry);
+          root.appendChild(card);
+        });
+        updateAdvisoryExpiryCountdowns();
+      })
+      .catch(function () { /* feed is best-effort; the toast already fired */ });
+  };
+
+  // Ticks every card's "expires in ..." line and removes any card whose 4h
+  // TTL has passed WHILE this view stayed open -- refreshAdvisoryFeed() alone
+  // only re-checks expiry on the next fetch (view switch or a live SSE
+  // advisory), so a long-idle viewer would otherwise keep seeing a stale
+  // entry the backend has already dropped.
+  function updateAdvisoryExpiryCountdowns() {
+    var root = document.getElementById("advisory-log-list");
+    if (!root) return;
+    var now = Date.now();
+    Array.prototype.slice.call(root.querySelectorAll("[data-expires-at-utc]")).forEach(function (card) {
+      var expiresAt = parseUtcIso(card.dataset.expiresAtUtc);
+      if (!expiresAt) return;
+      var msLeft = expiresAt.getTime() - now;
+      var label = card.querySelector(".expiry-countdown");
+      if (msLeft <= 0) {
+        card.remove();
+        if (!root.querySelector("[data-expires-at-utc]") && !root.children.length) {
+          var empty = document.createElement("div");
+          empty.className = "text-sm text-slate-500 italic px-1";
+          empty.textContent = "No advisories published yet.";
+          root.appendChild(empty);
+        }
+        return;
+      }
+      if (label) {
+        var hLeft = Math.floor(msLeft / 3600000);
+        var mLeft = Math.floor((msLeft % 3600000) / 60000);
+        label.textContent = "Expires in " + hLeft + "h " + mLeft + "m";
+      }
+    });
+  }
+  setInterval(updateAdvisoryExpiryCountdowns, 60 * 1000);
+
   window.openAdvisoryModal = function () {
     var modal = document.getElementById("modal-advisory");
     if (modal) modal.classList.remove("hidden");
@@ -5444,7 +5615,6 @@
   window.executeAdvisoryPost = function () {
     var input = document.getElementById("advisory-message-input");
     var message = input ? input.value.trim() : "";
-    window.closeAdvisoryModal();
 
     var districts = window.StormSenseDistrictsData;
     var worst = (Array.isArray(districts) && districts.length)
@@ -5453,31 +5623,28 @@
         })
       : null;
 
-    fetch(API_BASE + "/api/advisories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        district: worst ? worst.district : null,
-        level: worst ? worst.risk_level : null,
-        message: message || (worst
-          ? ("Conditions are being monitored for " + worst.district
-             + " (" + worst.overall_pct + "% model risk).")
-          : "Conditions are being monitored across West Bengal.")
-      })
-    })
-      .then(parseJson)
-      .then(function (r) {
-        if (input) input.value = "";
-        window.showToast(
-          r && r.posted
-            ? "Advisory published to the bulletin log."
-            : "Advisory could not be published.",
-          "history_edu");
-        if (typeof window.refreshAdvisoryFeed === "function") window.refreshAdvisoryFeed();
-      })
-      .catch(function () {
-        window.showToast("Advisory post failed: could not reach the backend.", "warning");
-      });
+    postAdminAction("/api/advisories", {
+      district: worst ? worst.district : null,
+      level: worst ? worst.risk_level : null,
+      message: message || (worst
+        ? ("Conditions are being monitored for " + worst.district
+           + " (" + worst.overall_pct + "% model risk).")
+        : "Conditions are being monitored across West Bengal.")
+    }, "advisory-admin-password", "advisory-admin-password-error", function (r) {
+      window.closeAdvisoryModal();
+      if (input) input.value = "";
+      window.showToast(
+        r && r.posted
+          ? "Advisory published to the bulletin log."
+          : "Advisory could not be published.",
+        "history_edu");
+      // Own tab too: the live SSE echo only reaches OTHER connected viewers'
+      // listeners in the usual flow, but this tab posted it, so refresh here
+      // directly rather than waiting on a round trip through its own stream.
+      if (typeof window.refreshAdvisoryFeed === "function") window.refreshAdvisoryFeed();
+    }, function () {
+      window.showToast("Advisory post failed: could not reach the backend.", "warning");
+    });
   };
 
   // ---------------------------------------------------------------------------
@@ -5501,7 +5668,6 @@
   window.executeOperationalAction = function () {
     var input = document.getElementById("operational-action-message-input");
     var message = input ? input.value.trim() : "";
-    window.closeOperationalActionModal();
 
     var districts = window.StormSenseDistrictsData;
     var worst = (Array.isArray(districts) && districts.length)
@@ -5510,27 +5676,21 @@
         })
       : null;
 
-    fetch(API_BASE + "/api/operational-actions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        district: worst ? worst.district : null,
-        level: worst ? worst.risk_level : null,
-        message: message || null
-      })
-    })
-      .then(parseJson)
-      .then(function (r) {
-        if (input) input.value = "";
-        window.showToast(
-          r && r.logged
-            ? "Request logged. No phone was contacted -- this app has no cell-broadcast access."
-            : "Could not log the request.",
-          "history_edu");
-      })
-      .catch(function () {
-        window.showToast("Log request failed: could not reach the backend.", "warning");
-      });
+    postAdminAction("/api/operational-actions", {
+      district: worst ? worst.district : null,
+      level: worst ? worst.risk_level : null,
+      message: message || null
+    }, "operational-action-admin-password", "operational-action-admin-password-error", function (r) {
+      window.closeOperationalActionModal();
+      if (input) input.value = "";
+      window.showToast(
+        r && r.logged
+          ? "Request logged. No phone was contacted -- this app has no cell-broadcast access."
+          : "Could not log the request.",
+        "history_edu");
+    }, function () {
+      window.showToast("Log request failed: could not reach the backend.", "warning");
+    });
   };
 
   // ---------------------------------------------------------------------------
@@ -5541,13 +5701,20 @@
   // browser's own EventSource retry, so there is no custom retry loop here.
   // ---------------------------------------------------------------------------
   var _sirenAudioCtx = null;
+  var _sirenOsc = null;
+  var _sirenGain = null;
 
+  // Real, continuous civil-defence-style wail: a single oscillator whose
+  // frequency is swept up and down by an LFO, rather than the old fixed-length
+  // 4-cycle sweep. It keeps sounding until stopSirenTone() is called (on
+  // dismiss), so a viewer cannot be alerted for only a few seconds while away
+  // from the screen -- the point of an actual siren is that it does not stop
+  // on its own.
   function playSirenTone() {
-    // Synthesised rather than an audio file: no asset to ship or fail to load,
-    // and it works offline. Two-tone sweep, roughly a civil-defence cadence.
     try {
       var Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
+      stopSirenTone();
       _sirenAudioCtx = _sirenAudioCtx || new Ctx();
       var ctx = _sirenAudioCtx;
       // Autoplay policies suspend the context until a user gesture; a viewer
@@ -5557,26 +5724,100 @@
 
       var osc = ctx.createOscillator();
       var gain = ctx.createGain();
-      osc.type = "sine";
+      var lfo = ctx.createOscillator();
+      var lfoGain = ctx.createGain();
+
+      osc.type = "sawtooth";
+      osc.frequency.value = 560;
+
+      // LFO modulates the main oscillator's frequency between ~440-680Hz on a
+      // slow 1.2s cycle -- the rising/falling wail of an air-raid siren.
+      lfo.type = "sine";
+      lfo.frequency.value = 1 / 1.2;
+      lfoGain.gain.value = 120;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+
       osc.connect(gain);
       gain.connect(ctx.destination);
       gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.3);
 
-      var t = ctx.currentTime;
-      for (var i = 0; i < 4; i++) {
-        osc.frequency.setValueAtTime(680, t);
-        osc.frequency.linearRampToValueAtTime(440, t + 0.6);
-        t += 0.6;
-        osc.frequency.setValueAtTime(440, t);
-        osc.frequency.linearRampToValueAtTime(680, t + 0.6);
-        t += 0.6;
-      }
-      gain.gain.setValueAtTime(0.25, t - 0.2);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t);
-      osc.start(ctx.currentTime);
-      osc.stop(t + 0.05);
+      osc.start();
+      lfo.start();
+      _sirenOsc = osc;
+      _sirenGain = gain;
+      // The LFO itself has no separate stop path exposed; stopping the main
+      // oscillator (which the LFO only modulates, never drives directly to
+      // the output) is enough to silence the siren.
+      osc._lfo = lfo;
     } catch (e) { /* sound is an enhancement; the overlay is the alert */ }
+  }
+
+  function stopSirenTone() {
+    try {
+      if (_sirenGain && _sirenAudioCtx) {
+        _sirenGain.gain.exponentialRampToValueAtTime(0.0001, _sirenAudioCtx.currentTime + 0.2);
+      }
+      if (_sirenOsc) {
+        var osc = _sirenOsc;
+        setTimeout(function () {
+          try { osc.stop(); } catch (e) {}
+          try { if (osc._lfo) osc._lfo.stop(); } catch (e) {}
+        }, 250);
+      }
+    } catch (e) { /* best-effort cleanup */ }
+    _sirenOsc = null;
+    _sirenGain = null;
+  }
+
+  /**
+   * The model evidence behind the dispatch: where the peak risk actually is,
+   * how high it reads, and whether a DIFFERENT area is forecast to rise next.
+   * Distinct from "why" above -- "why" explains why THIS VIEWER is seeing it
+   * (their distance from the target circle); this explains why the OPERATOR
+   * dispatched it at all (the model numbers behind the decision). Built with
+   * DOM nodes/textContent, never innerHTML, since alert.district/level are
+   * operator-supplied free text rendered into every connected viewer's page.
+   */
+  function renderSirenAlertBasis(alert) {
+    var box = document.getElementById("siren-alert-basis");
+    if (!box) return;
+    box.innerHTML = "";
+    var area = alert && alert.target_area;
+    var advance = alert && alert.advance_area;
+    if (!area && !advance) {
+      box.classList.add("hidden");
+      return;
+    }
+
+    function row(label, value) {
+      var line = document.createElement("div");
+      var labelSpan = document.createElement("span");
+      labelSpan.className = "text-red-300/80 font-bold";
+      labelSpan.textContent = label + ": ";
+      var valueSpan = document.createElement("span");
+      valueSpan.textContent = value;
+      line.appendChild(labelSpan);
+      line.appendChild(valueSpan);
+      return line;
+    }
+
+    if (area && area.peak_risk_pct != null) {
+      box.appendChild(row("PEAK MODEL RISK", area.peak_risk_pct + "% at "
+        + Number(area.center_lat).toFixed(2) + "°N, " + Number(area.center_lon).toFixed(2) + "°E"
+        + (area.radius_km != null ? " (alert radius " + area.radius_km + " km)" : "")));
+    }
+    if (area && area.basis) {
+      box.appendChild(row("BASIS", area.basis));
+    }
+    if (advance && advance.peak_risk_pct != null) {
+      box.appendChild(row("RISK RISING NEARBY", advance.peak_risk_pct + "% forecast"
+        + (advance.rises_from_pct != null ? " (up from " + advance.rises_from_pct + "% now)" : "")
+        + (advance.eta_hours != null ? ", about " + advance.eta_hours + "h ahead" : "")
+        + " at " + Number(advance.center_lat).toFixed(2) + "°N, " + Number(advance.center_lon).toFixed(2) + "°E"));
+    }
+    box.classList.remove("hidden");
   }
 
   function showSirenAlert(alert, verdict) {
@@ -5631,8 +5872,12 @@
         why = "Your location is unavailable, so this alert is shown regardless of distance.";
       } else if (verdict && verdict.reason === "untargeted") {
         why = "Issued for the whole monitored region.";
+      } else if (verdict && verdict.reason === "own-dispatch") {
+        why = "Shown because you dispatched this broadcast.";
       }
       setText("siren-alert-why", why);
+
+      renderSirenAlertBasis(alert);
     }
 
     // Tone only for the immediate tier. A pre-alarm that wails is a pre-alarm
@@ -5660,6 +5905,7 @@
       overlay.classList.add("hidden");
       overlay.classList.remove("flex");
     }
+    stopSirenTone();
   };
 
   // Great-circle distance in km. Used to decide, ON THIS DEVICE, whether this
@@ -5737,6 +5983,19 @@
           return;
         }
         showSirenAlert(alert, verdict);
+      });
+      // Advisories are informational (no overlay, no sound, per the product
+      // distinction from the siren above) but must still reach every OTHER
+      // connected viewer live, not just show up next time they happen to
+      // reload. A toast is the right weight for that.
+      es.addEventListener("advisory", function (ev) {
+        var advisory;
+        try { advisory = JSON.parse(ev.data) || {}; } catch (e) { advisory = {}; }
+        window.showToast(
+          "New advisory" + (advisory.district ? " for " + advisory.district : "")
+            + ": " + (advisory.message || "Conditions are being monitored."),
+          "history_edu");
+        if (typeof window.refreshAdvisoryFeed === "function") window.refreshAdvisoryFeed();
       });
     } catch (e) { /* stream unavailable; dashboard still functions */ }
   }
@@ -6149,6 +6408,18 @@
 
       // Render dashboard based on active mode
       updateModeUI(window.stormSenseMode);
+
+      // NOW is pre-selected in the HTML (the button already carries the
+      // active styling), but nothing had ever run the click handler that
+      // swaps the temporal banner from the "+2H FORECAST" box to the real
+      // "CURRENT CONDITIONS / OBSERVED ... AGE" box. That left the stale
+      // forecast box on screen at first paint -- it only corrected itself
+      // once the user clicked a horizon button, which happened to run
+      // setForecastHorizon and flip the boxes for the first time. Firing it
+      // once here makes the initial paint match the already-selected NOW
+      // button instead of waiting for that first incidental click.
+      var nowBtn = document.querySelector('#horizon-controls .horizon-btn');
+      window.setForecastHorizon(nowBtn, 'now', 0);
 
       // Live auto-refresh. Timers are cleared first so repeated initialisation
       // can never leave two intervals running and double up requests.

@@ -3,7 +3,7 @@
 <html class="scroll-smooth" lang="en"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>StormSense WB — West Bengal Meteorological AI &amp; Early Warning Platform</title>
+<title>StormSense — AI Severe-Weather Nowcasting for West Bengal</title>
 <!-- Fonts -->
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
@@ -12,6 +12,93 @@
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <!-- Lucide Icons CDN -->
 <script src="https://unpkg.com/lucide@latest"></script>
+<!-- Google Maps loader with per-key failover -- same pattern the dashboard
+     (frontend/index.html) uses, so the landing page's radar view runs on the
+     real Google Maps SDK, not a third-party no-key tile provider.
+     GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER is substituted server-side by
+     serve_landing() in backend/main.py, exactly like serve_dashboard() does
+     for the real app -- the key never appears in this file on disk. -->
+<script>
+window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== "undefined")
+  ? GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER
+  : [];
+(function () {
+  var keys = Array.isArray(window.STORMSENSE_MAPS_KEYS) ? window.STORMSENSE_MAPS_KEYS.slice() : [];
+  if (!keys.length) { console.error("[maps] no Google Maps key configured"); return; }
+
+  var BURNED = "stormsense.maps.burnedKeys";
+  function burned() {
+    try { return JSON.parse(sessionStorage.getItem(BURNED) || "[]") || []; }
+    catch (e) { return []; }
+  }
+  function markBurned(k) {
+    try {
+      var b = burned();
+      if (b.indexOf(k) === -1) { b.push(k); sessionStorage.setItem(BURNED, JSON.stringify(b)); }
+    } catch (e) {}
+  }
+  var alreadyBurned = burned();
+  var usable = keys.filter(function (k) { return alreadyBurned.indexOf(k) === -1; });
+  if (usable.length) {
+    keys = usable;
+  } else {
+    try { sessionStorage.removeItem(BURNED); } catch (e) {}
+  }
+
+  var idx = 0;
+  window.STORMSENSE_MAPS_KEY_STATE = { total: keys.length, activeIndex: 0, failed: [] };
+
+  function cleanup() {
+    try { delete window.google; } catch (e) { window.google = undefined; }
+    var old = document.getElementById("gmaps-sdk");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+  }
+
+  function load() {
+    if (idx >= keys.length) {
+      console.error("[maps] all " + keys.length + " Google Maps key(s) failed (quota or auth).");
+      window.STORMSENSE_MAPS_EXHAUSTED = true;
+      document.dispatchEvent(new CustomEvent("stormsense:maps-exhausted"));
+      return;
+    }
+    window.STORMSENSE_MAPS_KEY_STATE.activeIndex = idx;
+    var s = document.createElement("script");
+    s.id = "gmaps-sdk";
+    s.async = true;
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(keys[idx]) +
+            "&libraries=geometry&callback=__stormsenseMapsReady";
+    s.onerror = function () { failover("script load error"); };
+    document.head.appendChild(s);
+  }
+
+  function failover(reason) {
+    var badIdx = idx;
+    window.STORMSENSE_MAPS_KEY_STATE.failed.push({ index: badIdx, reason: reason });
+    console.warn("[maps] key #" + (badIdx + 1) + "/" + keys.length + " failed (" + reason + ")");
+    var isAuth = reason.indexOf("gm_authFailure") !== -1;
+    idx += 1;
+    if (isAuth) markBurned(keys[badIdx]);
+    if (idx < keys.length) {
+      console.warn("[maps] failing over to key #" + (idx + 1) + "/" + keys.length);
+      cleanup();
+      load();
+    } else {
+      load(); // records exhaustion
+    }
+  }
+
+  window.gm_authFailure = function () { failover("gm_authFailure (quota or invalid key)"); };
+
+  window.__stormsenseMapsReady = function () {
+    window.STORMSENSE_MAPS_READY = true;
+    try { sessionStorage.removeItem("stormsense.maps.reloads"); } catch (e) {}
+    console.info("[maps] loaded with key #" + (idx + 1) + "/" + keys.length);
+    document.dispatchEvent(new CustomEvent("stormsense:maps-ready"));
+  };
+
+  load();
+})();
+</script>
 
 <script>
   document.addEventListener('DOMContentLoaded', function () {
@@ -22,18 +109,66 @@
 
     const navLinks = document.querySelectorAll('#main-nav .nav-link');
 
+    function setActiveNavLink(id) {
+      navLinks.forEach(item => {
+        item.classList.toggle('active', item.getAttribute('href') === '#' + id);
+      });
+    }
+
     navLinks.forEach(link => {
       link.addEventListener('click', function () {
-
-        // Remove selected state from every nav item
-        navLinks.forEach(item => {
-          item.classList.remove('active');
-        });
-
-        // Add selected state to clicked item
-        this.classList.add('active');
+        // Immediate feedback on click; the IntersectionObserver below will
+        // also settle on the right link once the smooth-scroll lands, but
+        // that takes a moment and a click should highlight instantly.
+        setActiveNavLink(this.getAttribute('href').slice(1));
       });
     });
+
+    // SCROLL-SPY: without this, "active" only ever changed on a nav click,
+    // so it stayed stuck on whichever section the visitor last clicked (or
+    // "Platform" if they never clicked anything) no matter how far they
+    // scrolled past it -- reported as "Platform" staying highlighted while
+    // looking at the How It Works section.
+    //
+    // Deliberately NOT ranked by IntersectionObserver's intersectionRatio:
+    // that favours whichever section fits ENTIRELY inside the observed band,
+    // so a section taller than the viewport (live-radar, about -- both over
+    // 1200px against a ~900px viewport) never "wins" against a shorter
+    // neighbour that is still partly visible, and the nav stays stuck one
+    // section behind on exactly those two. Instead this picks the LAST
+    // section (in document order) whose top edge has scrolled above a fixed
+    // line near the top of the viewport -- correct regardless of how tall
+    // any individual section is, since it never depends on how much of the
+    // section is visible, only on whether its start has been passed.
+    const sections = Array.from(navLinks)
+      .map(link => document.getElementById(link.getAttribute('href').slice(1)))
+      .filter(Boolean);
+    const ACTIVATION_LINE_PX = 140; // below the fixed header, matching where a section's heading first clears it
+
+    function updateActiveFromScroll() {
+      let current = sections[0];
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= ACTIVATION_LINE_PX) {
+          current = section;
+        } else {
+          break; // sections are in document/top-to-bottom order, so nothing later can qualify either
+        }
+      }
+      if (current) setActiveNavLink(current.id);
+    }
+
+    if (sections.length) {
+      var navSpyTicking = false;
+      window.addEventListener('scroll', function () {
+        if (navSpyTicking) return;
+        navSpyTicking = true;
+        requestAnimationFrame(function () {
+          updateActiveFromScroll();
+          navSpyTicking = false;
+        });
+      }, { passive: true });
+      updateActiveFromScroll(); // set correctly on load, e.g. a deep link or a reload mid-page
+    }
 
   });
 </script>
@@ -147,22 +282,22 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <!-- Top Protocol Pill -->
 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/90 border border-slate-800 text-xs text-slate-300 mb-6 font-mono shadow-sm">
-<span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
-<span class="text-rose-400 font-semibold uppercase">Smart India Hackathon &amp; MoES Flagship</span>
+<span class="w-2 h-2 rounded-full bg-sky-400"></span>
+<span class="text-sky-400 font-semibold uppercase">Independent Hackathon Project</span>
 <span class="text-slate-600">•</span>
-<span class="text-sky-400 font-medium">WBSDMA &amp; IMD 4-Stage Operational Protocol</span>
+<span class="text-slate-400 font-medium">Not an official government warning service</span>
 </div>
 <!-- Hero Grid -->
 <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
 <!-- Left Column: Problem & Value Prop -->
 <div class="lg:col-span-7 flex flex-col gap-5">
 <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
-          Predicting Cloudbursts, Flash Floods &amp; Severe Squalls 
+          Forecasting Severe-Weather Risk
           <span class="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-sky-300 to-amber-300"> 2–6 Hours </span>
-          Before Impact Across All of West Bengal.
+          Ahead Across West Bengal.
         </h1>
 <p class="text-base sm:text-lg text-slate-300 leading-relaxed font-normal">
-          A revolutionary AI nowcasting engine fusing <strong class="text-white font-semibold">IMD Alipore (Kolkata), Siliguri DWR, and Paradip</strong> Doppler radars with INSAT-3DR multispectral satellite telemetry and physics-guided deep learning — safeguarding <strong class="text-amber-400 font-semibold">102,000,000+ vulnerable citizens</strong> across all 23 districts of West Bengal from the Darjeeling Himalayas to the Sundarbans.
+          An AI nowcasting model fusing <strong class="text-white font-semibold">NOAA GFS live atmospheric analyses</strong>, trained on four monsoon seasons of <strong class="text-white font-semibold">ECMWF ERA5 reanalysis</strong>, with physics-guided deep learning — estimating thunderstorm, heavy-rain and flash-flood risk across all 23 districts of West Bengal from the Darjeeling Himalayas to the Sundarbans.
         </p>
 <!-- Primary Dual CTAs -->
 <div class="flex flex-wrap items-center gap-3 pt-2">
@@ -192,60 +327,60 @@
 <div class="flex flex-wrap items-center gap-4 pt-3 text-xs font-mono text-slate-400 border-t border-slate-800/60">
 <span class="inline-flex items-center gap-1.5 text-slate-300">
 <i class="w-4 h-4 text-emerald-400" data-lucide="check-circle-2"></i>
-            Kolkata (Alipore) &amp; Siliguri Dual-DWR Co-Assimilated
+            Live NOAA GFS Ingestion, Refreshed Every 5 Minutes
           </span>
 <span class="text-slate-600">•</span>
 <span class="inline-flex items-center gap-1.5 text-slate-300">
 <i class="w-4 h-4 text-sky-400" data-lucide="shield-check"></i>
-            WBSDMA / NDMA CAP-v1.2 Automated Siren Dissemination
+            Calibrated Probabilities, Reported Openly
           </span>
 </div>
 </div>
-<!-- Right Column: Prominent Doppler Radar Composite Preview Card -->
+<!-- Right Column: Live Risk Surface, generated by the model itself (not a screenshot) -->
 <div class="lg:col-span-5 relative">
 <div class="rounded-xl bg-slate-900/95 border border-sky-500/40 overflow-hidden shadow-2xl shadow-sky-950/60">
 <!-- Alert Ribbon Banner -->
-<div class="bg-emerald-700 px-4 py-2 flex items-center justify-between text-white text-xs font-mono font-bold tracking-wide">
+<div class="bg-slate-800 px-4 py-2 flex items-center justify-between text-white text-xs font-mono font-bold tracking-wide" id="landing-hero-ribbon">
 <div class="flex items-center gap-2">
 <span class="w-2.5 h-2.5 rounded-full bg-white animate-pulse"></span>
-<span>STAGE 1: ROUTINE STATEWIDE MONITORING</span>
+<span id="landing-hero-ribbon-text">LOADING LIVE MODEL STATE</span>
 </div>
-<span class="bg-emerald-900/80 px-2 py-0.5 rounded text-[11px]">NO ACTIVE WARNINGS</span>
+<span class="bg-black/30 px-2 py-0.5 rounded text-[11px]" id="landing-hero-ribbon-badge">&hellip;</span>
 </div>
-<!-- Doppler Radar Image Overlay -->
+<!-- Live Risk Surface: fetched directly from the model's own API -->
 <div class="relative w-full aspect-[4/3] bg-slate-950 overflow-hidden group">
-<img alt="Doppler Weather Radar Reflectivity Map of West Bengal showing hook echo convective storm cell" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" src="/static/radar-hero.png"/>
+<img alt="StormSense risk map screenshot showing colour-banded severe-weather risk bands across West Bengal districts" class="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-700" id="landing-hero-risk-img" src="/static/screenshots/risk-map-overview.png"/>
 <!-- Top Left Telemetry HUD -->
 <div class="absolute top-3 left-3 bg-[#0b101d]/90 backdrop-blur-md px-3 py-2 rounded border border-slate-700/80 text-[11px] font-mono text-slate-200 shadow-lg space-y-0.5">
 <div class="text-sky-400 font-bold flex items-center gap-1.5">
 <span class="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
-                RADAR: VOHY-KOL &amp; SLG-NORTH
+                MODEL: SEVEREWEATHERNET V2
               </div>
-<div class="text-slate-300">GRID: 23/23 WB DISTRICTS</div>
-<div class="text-emerald-400 font-semibold">CELLS TRACKED: NONE</div>
+<div class="text-slate-300">GRID: 825 CELLS · 0.25°</div>
+<div class="text-emerald-400 font-semibold" id="landing-hero-hud-district">LOADING&hellip;</div>
 </div>
 <!-- Top Right Status Badge -->
-<div class="absolute top-3 right-3 bg-emerald-950/90 backdrop-blur-md px-2.5 py-1.5 rounded border border-emerald-600/80 text-[11px] font-mono text-emerald-200 shadow-lg flex items-center gap-1.5">
-<i class="w-3.5 h-3.5 text-emerald-400" data-lucide="shield-check"></i>
-<span class="font-bold">NO SEVERE SIGNATURE</span>
+<div class="absolute top-3 right-3 bg-slate-950/90 backdrop-blur-md px-2.5 py-1.5 rounded border border-slate-700/80 text-[11px] font-mono text-slate-200 shadow-lg flex items-center gap-1.5" id="landing-hero-status-badge">
+<i class="w-3.5 h-3.5 text-sky-400" data-lucide="shield-check"></i>
+<span class="font-bold" id="landing-hero-status-text">LOADING</span>
 </div>
 <!-- Bottom Right Peak Rainfall Readout -->
 <div class="absolute bottom-3 right-3 bg-[#0b101d]/90 backdrop-blur-md px-3 py-2 rounded border border-slate-700/80 text-right font-mono shadow-lg">
-<span class="text-[10px] text-slate-400 block tracking-wider uppercase">PEAK STATION RAINFALL (1H)</span>
-<span class="text-2xl font-bold text-sky-400 tracking-tight leading-none">1.78 <span class="text-xs text-slate-300 font-normal">mm</span></span>
-<span class="text-[10px] text-slate-400 font-bold block mt-0.5">BARDHAMAN · LIGHT RAIN</span>
+<span class="text-[10px] text-slate-400 block tracking-wider uppercase">PEAK 3H RAINFALL</span>
+<span class="text-2xl font-bold text-sky-400 tracking-tight leading-none" id="landing-hero-rain-value">&mdash;</span>
+<span class="text-[10px] text-slate-400 font-bold block mt-0.5" id="landing-hero-rain-district">&nbsp;</span>
 </div>
 </div>
-<!-- Doppler Status Flight Strip -->
+<!-- Status Flight Strip -->
 <div class="p-3.5 bg-slate-900 border-t border-slate-800 space-y-2 font-mono text-xs">
 <div class="flex items-center justify-between text-slate-300">
-<span class="text-slate-400">Peak Statewide Surface Wind:</span>
-<span class="text-sky-400 font-bold">11.4 km/h (Krishnanagar · light breeze)</span>
+<span class="text-slate-400">Highest District Risk:</span>
+<span class="text-sky-400 font-bold" id="landing-hero-peak-pct">&mdash;</span>
 </div>
 <!-- Segmented Severity Bar -->
-<div class="w-full flex items-center gap-1 h-2">
-<div class="h-full flex-1 bg-emerald-500 rounded-l"></div>
-<div class="h-full flex-1 bg-emerald-500"></div>
+<div class="w-full flex items-center gap-1 h-2" id="landing-hero-severity-bar">
+<div class="h-full flex-1 bg-slate-700 rounded-l"></div>
+<div class="h-full flex-1 bg-slate-700"></div>
 <div class="h-full flex-1 bg-slate-700"></div>
 <div class="h-full flex-1 bg-slate-700"></div>
 <div class="h-full flex-1 bg-slate-700"></div>
@@ -254,35 +389,35 @@
 <div class="h-full flex-1 bg-slate-700 rounded-r"></div>
 </div>
 <div class="flex items-center justify-between text-[11px] text-slate-400">
-<span>SEVERITY INDEX: <strong class="text-emerald-400">LOW (1/8)</strong></span>
-<span class="text-sky-400 font-mono">TITAN + DeepSCIT WB State v4.4</span>
+<span>SEVERITY INDEX: <strong class="text-emerald-400" id="landing-hero-severity-label">&mdash;</strong></span>
+<span class="text-sky-400 font-mono">StormSense V2 · Calibrated</span>
 </div>
 </div>
 </div>
 </div>
 </div>
-<!-- 4 Crucial Statewide Telemetry Cards -->
+<!-- 4 Real Model Fact Cards -->
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-12">
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-sm flex flex-col gap-1.5 hover:border-sky-500/40 transition-colors">
 <div class="flex items-center justify-between text-xs font-mono text-sky-400">
-<span>LEAD TIME WINDOW</span>
+<span>FORECAST WINDOW</span>
 <i class="w-4 h-4" data-lucide="clock"></i>
 </div>
 <div class="flex items-baseline gap-1">
 <span class="text-2xl sm:text-3xl font-bold font-mono text-white">2–6</span>
 <span class="text-sm font-semibold text-sky-400">Hours</span>
 </div>
-<span class="text-xs text-slate-400">vs. 15–30m legacy heuristic warnings</span>
+<span class="text-xs text-slate-400">Model lead times from each GFS analysis</span>
 </div>
-<div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-sm flex flex-col gap-1.5 hover:border-rose-500/40 transition-colors">
-<div class="flex items-center justify-between text-xs font-mono text-rose-400">
-<span>VECTOR ACCURACY</span>
-<i class="w-4 h-4" data-lucide="crosshair"></i>
+<div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-sm flex flex-col gap-1.5 hover:border-emerald-500/40 transition-colors">
+<div class="flex items-center justify-between text-xs font-mono text-emerald-400">
+<span>LIVE SKILL</span>
+<i class="w-4 h-4" data-lucide="trending-up"></i>
 </div>
 <div class="flex items-baseline gap-1">
-<span class="text-2xl sm:text-3xl font-bold font-mono text-white">92.6%</span>
+<span class="text-2xl sm:text-3xl font-bold font-mono text-white">~1.8×</span>
 </div>
-<span class="text-xs text-slate-400">High-risk storm track fidelity statewide</span>
+<span class="text-xs text-slate-400">PR-AUC vs. no-skill baseline, live GFS input</span>
 </div>
 <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-sm flex flex-col gap-1.5 hover:border-amber-500/40 transition-colors">
 <div class="flex items-center justify-between text-xs font-mono text-amber-400">
@@ -290,21 +425,21 @@
 <i class="w-4 h-4" data-lucide="grid"></i>
 </div>
 <div class="flex items-baseline gap-1">
-<span class="text-2xl sm:text-3xl font-bold font-mono text-white">~28.0</span>
+<span class="text-2xl sm:text-3xl font-bold font-mono text-white">~28</span>
 <span class="text-sm font-semibold text-amber-400">km</span>
 </div>
-<span class="text-xs text-slate-400">Block &amp; Gram Panchayat across 23 districts</span>
+<span class="text-xs text-slate-400">0.25° grid, 825 cells across 23 districts</span>
 </div>
-<div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-sm flex flex-col gap-1.5 hover:border-emerald-500/40 transition-colors">
-<div class="flex items-center justify-between text-xs font-mono text-emerald-400">
-<span>SIREN INFERENCE</span>
-<i class="w-4 h-4" data-lucide="gauge"></i>
+<div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800/80 shadow-sm flex flex-col gap-1.5 hover:border-rose-500/40 transition-colors">
+<div class="flex items-center justify-between text-xs font-mono text-rose-400">
+<span>REFRESH</span>
+<i class="w-4 h-4" data-lucide="refresh-cw"></i>
 </div>
 <div class="flex items-baseline gap-1">
-<span class="text-2xl sm:text-3xl font-bold font-mono text-white">&lt; 1.2</span>
-<span class="text-sm font-semibold text-emerald-400">sec</span>
+<span class="text-2xl sm:text-3xl font-bold font-mono text-white">5</span>
+<span class="text-sm font-semibold text-rose-400">min</span>
 </div>
-<span class="text-xs text-slate-400">State-wide WB SDMA CAP alert broadcast</span>
+<span class="text-xs text-slate-400">Checks for new GFS cycles (published every 6h)</span>
 </div>
 </div>
 </div>
@@ -316,76 +451,76 @@
 <section class="py-16 md:py-20 bg-slate-950/70 border-b border-slate-800/60" id="capabilities">
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="max-w-3xl mb-10">
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// METEOROLOGICAL CAPABILITIES</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// MEASURED, NOT CLAIMED</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
-        Capabilities: Bridging the Critical 2-to-6 Hour Meteorological Void
+        Capabilities: What the Model Actually Does
       </h2>
 <p class="text-slate-400 text-sm sm:text-base mt-2">
-        How StormSense overcomes traditional NWP lag and Doppler beam limitations across Himalayan foothills, Gangetic plains, and coastal delta to provide actionable civil protection.
+        Two different operating conditions, because they give very different numbers. Lab is held-out ERA5 (the model's own training distribution); live is real NOAA GFS input, which is what the dashboard actually runs on.
       </p>
 </div>
 <!-- Comparison Grid -->
 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-<!-- Card A: Legacy Approach -->
+<!-- Card A: Lab conditions -->
 <div class="p-6 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
 <div>
 <div class="flex items-center justify-between mb-3">
-<span class="px-2 py-0.5 rounded text-xs font-mono bg-slate-800 text-slate-400">TRADITIONAL LEGACY MODELS</span>
-<i class="w-5 h-5 text-rose-500/80" data-lucide="x-circle"></i>
+<span class="px-2 py-0.5 rounded text-xs font-mono bg-slate-800 text-slate-400">HELD-OUT ERA5 TEST (2024 SEASON)</span>
+<i class="w-5 h-5 text-slate-500" data-lucide="flask-conical"></i>
 </div>
-<h3 class="text-lg font-bold text-slate-200">24–48h NWP Macro-Scale Forecasts</h3>
+<h3 class="text-lg font-bold text-slate-200">Lab Conditions</h3>
 <p class="text-xs sm:text-sm text-slate-400 mt-2 leading-relaxed">
-            Coarse global/synoptic runs (12–25 km grid every 6–12h). Misses rapid Darjeeling &amp; Kalimpong flash floods, Kalbaishakhi squalls across Burdwan, and hyper-localized cloudbursts along Bengal river basins until radar returns are already severe.
+            Performance on the same reanalysis distribution the model was trained on. This is the best case, not what the live dashboard sees — the live input comes from a different weather system (GFS).
           </p>
 </div>
 <div class="mt-6 space-y-2 font-mono text-xs">
 <div class="flex justify-between p-2 rounded bg-slate-950/60 border border-slate-800/50">
-<span class="text-slate-400">Lead Time for Convection:</span>
-<span class="text-rose-400 font-semibold">Under 25 Minutes</span>
+<span class="text-slate-400">Forecast Leads:</span>
+<span class="text-slate-300 font-semibold">+2h to +6h</span>
 </div>
 <div class="flex justify-between p-2 rounded bg-slate-950/60 border border-slate-800/50">
-<span class="text-slate-400">Spatial Precision:</span>
-<span class="text-slate-300">Broad District-wide (1,500+ km²)</span>
+<span class="text-slate-400">Spatial Grid:</span>
+<span class="text-slate-300">0.25° (~28 km), 825 cells</span>
 </div>
 <div class="flex justify-between p-2 rounded bg-slate-950/60 border border-slate-800/50">
-<span class="text-slate-400">Civil Alert Latency:</span>
-<span class="text-rose-400">30 to 45 mins delayed</span>
+<span class="text-slate-400">CSI (+2h → +6h):</span>
+<span class="text-slate-300">0.394 → 0.244</span>
 </div>
 <div class="flex justify-between p-2 rounded bg-slate-950/60 border border-slate-800/50">
 <span class="text-slate-400">False Alarm Ratio (FAR):</span>
-<span class="text-rose-400 font-bold">&gt; 38.5% statewide</span>
+<span class="text-slate-300 font-bold">0.52 – 0.64</span>
 </div>
 </div>
 </div>
-<!-- Card B: StormSense Neural Grid -->
+<!-- Card B: Live conditions -->
 <div class="p-6 rounded-xl bg-slate-900 border border-sky-500/40 flex flex-col justify-between relative shadow-xl shadow-sky-950/40">
 <div class="absolute -top-10 -right-10 w-32 h-32 bg-sky-500/10 rounded-full blur-2xl pointer-events-none"></div>
 <div>
 <div class="flex items-center justify-between mb-3">
-<span class="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30">STORMSENSE NEURAL EXTRAPOLATION</span>
-<i class="w-5 h-5 text-sky-400" data-lucide="check-circle"></i>
+<span class="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30">LIVE GFS BACKTEST (2024, 14 CASES)</span>
+<i class="w-5 h-5 text-sky-400" data-lucide="satellite-dish"></i>
 </div>
-<h3 class="text-lg font-bold text-white">Physics-Informed Deep Radar Extrapolation</h3>
+<h3 class="text-lg font-bold text-white">Operational Reality</h3>
 <p class="text-xs sm:text-sm text-slate-300 mt-2 leading-relaxed">
-            Seamlessly assimilates Kolkata Alipore S-Band, Siliguri North Bengal DWR, Paradip coastal perimeter, and INSAT-3DR rapid-scan infrared. Continuous thermodynamic coupling (CAPE, CIN, bulk shear, and Himalayan orographic triggers) statewide.
+            What the deployed dashboard actually achieves, fed real live NOAA GFS 0.25° analyses. Lower than the lab figures because GFS and ERA5 are genuinely different atmospheric systems.
           </p>
 </div>
 <div class="mt-6 space-y-2 font-mono text-xs">
 <div class="flex justify-between p-2 rounded bg-slate-950 border border-sky-500/20">
-<span class="text-slate-300">Lead Time for Severe Storms:</span>
-<span class="text-sky-400 font-bold">120 to 360 Minutes (2-6 Hours)</span>
+<span class="text-slate-300">Forecast Leads:</span>
+<span class="text-sky-400 font-bold">+2h to +6h</span>
 </div>
 <div class="flex justify-between p-2 rounded bg-slate-950 border border-sky-500/20">
-<span class="text-slate-300">Spatial Precision:</span>
-<span class="text-sky-300">1 km² Block-Level Across All 23 Districts</span>
+<span class="text-slate-300">Skill vs. No-Skill Baseline:</span>
+<span class="text-sky-300">~1.8× (PR-AUC)</span>
 </div>
 <div class="flex justify-between p-2 rounded bg-slate-950 border border-sky-500/20">
-<span class="text-slate-300">Civil Alert Latency:</span>
-<span class="text-sky-400 font-bold">&lt; 90 Seconds to BDO/SDRF/WBSDMA</span>
+<span class="text-slate-300">CSI (+2h → +6h):</span>
+<span class="text-sky-400 font-bold">0.049 → 0.081</span>
 </div>
 <div class="flex justify-between p-2 rounded bg-slate-950 border border-sky-500/20">
 <span class="text-slate-300">False Alarm Ratio (FAR):</span>
-<span class="text-emerald-400 font-bold">&lt; 8.2% (Field Verified)</span>
+<span class="text-amber-400 font-bold">0.86 – 0.92</span>
 </div>
 </div>
 </div>
@@ -394,19 +529,19 @@
 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
 <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2.5 text-xs font-mono text-slate-300">
 <i class="w-4 h-4 text-amber-400 shrink-0" data-lucide="cloud-lightning"></i>
-<span>Microburst early detection</span>
+<span>Thunderstorm probability per cell</span>
 </div>
 <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2.5 text-xs font-mono text-slate-300">
 <i class="w-4 h-4 text-sky-400 shrink-0" data-lucide="droplets"></i>
-<span>Hydrodynamic runoff surge modeling</span>
+<span>3-hour rainfall regression</span>
 </div>
 <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2.5 text-xs font-mono text-slate-300">
 <i class="w-4 h-4 text-rose-400 shrink-0" data-lucide="activity"></i>
-<span>Multi-frequency de-aliasing</span>
+<span>Terrain-aware flash-flood proxy</span>
 </div>
 <div class="p-3.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center gap-2.5 text-xs font-mono text-slate-300">
-<i class="w-4 h-4 text-emerald-400 shrink-0" data-lucide="volume-2"></i>
-<span>Automated siren trigger thresholds</span>
+<i class="w-4 h-4 text-emerald-400 shrink-0" data-lucide="thermometer"></i>
+<span>Per-lead calibrated probabilities</span>
 </div>
 </div>
 </div>
@@ -419,137 +554,119 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
 <div>
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">STATEWIDE SENSOR NETWORK</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">RADAR &amp; SATELLITE FEEDS</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
-          Live Radar: High-Resolution Doppler Reflectivity &amp; Satellite Telemetry
+          Live Radar &amp; Satellite View
         </h2>
 <p class="text-slate-400 text-sm sm:text-base mt-2">
-          Real-time dual-Doppler ingestion from IMD Kolkata (Alipore S-Band) and Siliguri (North Bengal DWR) with INSAT-3DR multispectral thermal IR.
+          A public precipitation radar mosaic (RainViewer), live over the West Bengal domain.
         </p>
 </div>
-<div class="flex items-center gap-2 px-3 py-1 rounded bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-400 shrink-0">
-<span class="w-2 h-2 rounded-[1px] bg-emerald-400 animate-pulse"></span>
-<span>STREAM SYNCED (30s REFRESH)</span>
+<div class="flex items-center gap-2 px-3 py-1 rounded bg-slate-900 border border-slate-800 font-mono text-xs text-emerald-400 shrink-0" id="landing-radar-status-pill">
+<span class="w-2 h-2 rounded-[1px] bg-amber-400 animate-pulse"></span>
+<span id="landing-radar-status-text">LOADING RADAR</span>
 </div>
 </div>
-<!-- Large Radar Viewer Display -->
+<!-- Large Radar Viewer Display: a real, live Leaflet + RainViewer map -->
 <div class="rounded-2xl bg-slate-900 border border-sky-500/40 p-4 md:p-6 shadow-2xl">
 <!-- Radar Window -->
 <div class="relative w-full aspect-[16/9] md:aspect-[16/9] bg-slate-950 rounded-xl overflow-hidden border border-slate-800">
-<img alt="High-resolution Doppler radar meteorological reflectivity map focused on West Bengal" class="w-full h-full object-contain" src="/static/radar-live-wb.png"/>
+<div id="landing-radar-map" class="w-full h-full"></div>
 <!-- Top Header Overlay Controls inside Viewer -->
-<div class="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+<div class="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-[1000]">
 <div class="bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded border border-slate-700/80 text-xs font-mono text-slate-200 pointer-events-auto">
-<span class="text-sky-400 font-bold">REGIONAL COMPOSITE</span> | MODE: REFLECTIVITY MOSAIC | COVERAGE: WB + NEIGHBOURS
+<span class="text-sky-400 font-bold">REGIONAL COMPOSITE</span> | SOURCE: RAINVIEWER | COVERAGE: WB + NEIGHBOURS
           </div>
-<div class="flex items-center gap-2 pointer-events-auto">
-<span class="px-2.5 py-1 rounded bg-emerald-950/90 text-emerald-300 border border-emerald-600/80 text-xs font-mono font-bold flex items-center gap-1.5">
-<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              NO SEVERE CELLS OVER WB
-            </span>
 </div>
-</div>
-<!-- dBZ Color Scale Bar Overlay Bottom Left -->
-<div class="absolute bottom-3 left-3 bg-slate-950/90 backdrop-blur-md p-2.5 rounded-lg border border-slate-700/80 text-xs font-mono">
+<!-- Legend Overlay Bottom Left: real risk bands, matching the dashboard -->
+<div class="absolute bottom-3 left-3 bg-slate-950/90 backdrop-blur-md p-2.5 rounded-lg border border-slate-700/80 text-xs font-mono z-[1000]">
 <div class="flex items-center justify-between text-[10px] text-slate-300 mb-1">
-<span>REFLECTIVITY (dBZ)</span>
-<span class="text-red-400 font-bold">PEAK 55.6 dBZ</span>
+<span>STORMSENSE MODEL RISK</span>
 </div>
 <div class="w-48 sm:w-64 h-3 rounded flex overflow-hidden border border-slate-700">
-<div class="h-full w-[20%]" style="background:#38bdf8" title="5-15 dBZ — light"></div>
-<div class="h-full w-[20%]" style="background:#22b3b0" title="15-25 dBZ — light rain"></div>
-<div class="h-full w-[20%]" style="background:#5fa83c" title="25-35 dBZ — moderate"></div>
-<div class="h-full w-[15%]" style="background:#e0b515" title="35-45 dBZ — heavy"></div>
-<div class="h-full w-[15%]" style="background:#e07b16" title="45-52 dBZ — very heavy"></div>
-<div class="h-full w-[10%]" style="background:#d1341a" title="52-60 dBZ — intense core"></div>
+<div class="h-full flex-1" style="background:#10b981" title="&lt;25% Normal"></div>
+<div class="h-full flex-1" style="background:#f59e0b" title="25-50% Watch"></div>
+<div class="h-full flex-1" style="background:#f97316" title="50-75% Alert"></div>
+<div class="h-full flex-1" style="background:#ef4444" title="&gt;=75% Warning"></div>
 </div>
 <div class="flex justify-between text-[9px] text-slate-400 mt-1">
-<span>5</span>
-<span>15</span>
-<span>25</span>
-<span>35</span>
-<span>45</span>
-<span>60 dBZ</span>
+<span>Normal</span>
+<span>Watch</span>
+<span>Alert</span>
+<span>Warning</span>
 </div>
 </div>
 </div>
-<!-- Station Health Grid & Convective Cell Table -->
+<!-- Station Health Grid & Info Table -->
 <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
-<!-- Station Health Grid (5 cols) -->
+<!-- Data Sources (5 cols) -->
 <div class="lg:col-span-5 space-y-2 font-mono text-xs">
-<span class="text-xs uppercase tracking-wider text-sky-400 font-bold block mb-2">RADAR &amp; SATELLITE DOWNLINK STATUS</span>
+<span class="text-xs uppercase tracking-wider text-sky-400 font-bold block mb-2">DATA SOURCES</span>
 <div class="p-2.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
 <div class="flex items-center gap-2">
 <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-<span class="text-slate-200">Kolkata Alipore (S-Band)</span>
+<span class="text-slate-200">RainViewer Radar Mosaic</span>
 </div>
-<span class="text-emerald-400 font-semibold">ACTIVE • 100% OK</span>
-</div>
-<div class="p-2.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
-<div class="flex items-center gap-2">
-<span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-<span class="text-slate-200">Siliguri DWR (North Bengal)</span>
-</div>
-<span class="text-emerald-400 font-semibold">ACTIVE • 99.4%</span>
+<span class="text-emerald-400 font-semibold" id="landing-radar-scan-age">LOADING</span>
 </div>
 <div class="p-2.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
 <div class="flex items-center gap-2">
 <span class="w-2 h-2 rounded-full bg-sky-400"></span>
-<span class="text-slate-200">Agartala C-Band (Border Perimeter)</span>
+<span class="text-slate-200">NOAA GFS 0.25° Analysis</span>
 </div>
-<span class="text-sky-400 font-semibold">NOMINAL • CO-SYNC</span>
+<span class="text-sky-400 font-semibold">Every 6h</span>
 </div>
 <div class="p-2.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between">
 <div class="flex items-center gap-2">
-<span class="w-2 h-2 rounded-full bg-purple-400"></span>
-<span class="text-slate-200">INSAT-3DR Geostationary Link</span>
+<span class="w-2 h-2 rounded-full bg-slate-500"></span>
+<span class="text-slate-200">Esri Dark Gray Basemap</span>
 </div>
-<span class="text-purple-300 font-semibold">LOCKED • SEVIRI TIR</span>
+<span class="text-slate-400 font-semibold">Static Tiles</span>
 </div>
 </div>
-<!-- SCIT Convective Cell Tracking Table (7 cols) -->
+<!-- Real Facts Table (7 cols) -->
 <div class="lg:col-span-7">
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold block mb-2">STATION RAINFALL LEADERBOARD (LAST HOUR)</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold block mb-2">WHAT THIS VIEW SHOWS</span>
 <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">
 <table class="w-full text-left font-mono text-xs">
 <thead class="bg-slate-900 text-slate-400 border-b border-slate-800">
 <tr>
-<th class="p-2.5">Station</th>
-<th class="p-2.5">District / Sector</th>
-<th class="p-2.5">Rain (1h)</th>
-<th class="p-2.5">Condition</th>
-<th class="p-2.5">Status</th>
+<th class="p-2.5">Layer</th>
+<th class="p-2.5">Product</th>
+<th class="p-2.5">Update</th>
+<th class="p-2.5">Kind</th>
 </tr>
 </thead>
 <tbody class="divide-y divide-slate-800/80 text-slate-300">
 <tr>
-<td class="p-2.5 font-bold text-sky-400">Bardhaman</td>
-<td class="p-2.5">Purba Bardhaman</td>
-<td class="p-2.5 font-bold text-sky-400">1.78 mm</td>
-<td class="p-2.5">Light rain</td>
-<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">NORMAL</span></td>
+<td class="p-2.5 font-bold text-sky-400">Radar mosaic</td>
+<td class="p-2.5">RainViewer composite</td>
+<td class="p-2.5 text-sky-400">~10 min</td>
+<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">OBSERVED</span></td>
 </tr>
 <tr>
-<td class="p-2.5 font-bold text-sky-400">Midnapore</td>
-<td class="p-2.5">Paschim Medinipur</td>
-<td class="p-2.5 text-sky-400">0.63 mm</td>
-<td class="p-2.5">Light rain</td>
-<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">NORMAL</span></td>
+<td class="p-2.5 font-bold text-sky-400">Model risk (dashboard)</td>
+<td class="p-2.5">StormSense severe-weather %</td>
+<td class="p-2.5 text-sky-400">5 min</td>
+<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px]">FORECAST</span></td>
 </tr>
 <tr>
-<td class="p-2.5 font-bold text-sky-400">Berhampore</td>
-<td class="p-2.5">Murshidabad</td>
-<td class="p-2.5 text-sky-400">0.48 mm</td>
-<td class="p-2.5">Light rain</td>
-<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">NORMAL</span></td>
+<td class="p-2.5 font-bold text-sky-400">GFS analysis (input)</td>
+<td class="p-2.5">NOAA GFS 0.25° f000</td>
+<td class="p-2.5 text-sky-400">6h</td>
+<td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]">OBSERVED</span></td>
 </tr>
 </tbody>
 </table>
 </div>
+<div class="mt-3 text-[11px] text-slate-500 leading-relaxed">
+The radar mosaic above is observed precipitation (RainViewer), a different product from the model's own forecast risk surface shown on the dashboard. Open the dashboard for the combined view.
 </div>
 </div>
 </div>
 </div>
+</div>
+</section>
 </section>
 <!-- ========================================== -->
 <!-- SECTION 4: id="how-it-works"               -->
@@ -559,35 +676,35 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-10">
 <div>
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">AI PIPELINE &amp; ARCHITECTURE</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">MODEL PIPELINE</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
-          How It Works: Statewide Atmospheric Ingestion &amp; Neural Architecture
+          How It Works: From Public Weather Data to District Risk
         </h2>
 <p class="text-slate-400 text-sm sm:text-base mt-2">
-          4-stage pipeline operating at 390ms co-inference cycle synthesizing radar volumes, geostationary channels, and surface telemetry.
+          Four stages, from a public global weather analysis to a calibrated, per-district risk estimate.
         </p>
 </div>
 <div class="flex items-center gap-2 px-3 py-1 rounded bg-slate-900 border border-slate-800 font-mono text-xs text-sky-400 shrink-0">
 <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
-<span>WB Co-Inference Cycle: 390ms</span>
+<span>Refreshes every 5 minutes</span>
 </div>
 </div>
-<!-- 4 Technical Architecture Pillars -->
+<!-- 4 Real Pipeline Stages -->
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
 <!-- Pillar 1 -->
 <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800/80 flex flex-col justify-between group hover:border-sky-500/40 transition-colors">
 <div>
 <div class="w-10 h-10 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-4 group-hover:scale-105 transition-transform">
-<i class="w-5 h-5" data-lucide="radio"></i>
+<i class="w-5 h-5" data-lucide="download-cloud"></i>
 </div>
-<span class="text-[11px] font-mono text-sky-400 font-semibold block uppercase">01 // Dual-Radar Lattice</span>
-<h3 class="text-base font-bold text-white mt-1">Dual-Pol S-Band &amp; X-Band</h3>
+<span class="text-[11px] font-mono text-sky-400 font-semibold block uppercase">01 // Ingest</span>
+<h3 class="text-base font-bold text-white mt-1">NOAA GFS Analyses</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            S-Band and X-Band direct telemetry from Alipore and Siliguri DWRs covering 100% of West Bengal, eliminating mountain and coastal radar shadows.
+            Surface and pressure-level fields fetched from NOAA's public GFS archive, regridded to the model's domain, and linearly interpolated between the two most recent 6-hourly analyses into six hourly input slots. No forecast hour is ever used as an input.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 text-xs font-mono text-sky-400 flex items-center justify-between">
-<span>500 km Combined Overlap</span>
+<span>0.25° Domain, 20–28°N 84–90°E</span>
 <i class="w-3.5 h-3.5" data-lucide="external-link"></i>
 </div>
 </div>
@@ -595,16 +712,16 @@
 <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800/80 flex flex-col justify-between group hover:border-rose-500/40 transition-colors">
 <div>
 <div class="w-10 h-10 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4 group-hover:scale-105 transition-transform">
-<i class="w-5 h-5" data-lucide="satellite"></i>
+<i class="w-5 h-5" data-lucide="sliders-horizontal"></i>
 </div>
-<span class="text-[11px] font-mono text-rose-400 font-semibold block uppercase">02 // Geostationary Feed</span>
-<h3 class="text-base font-bold text-white mt-1">INSAT-3DR Rapid Scanning</h3>
+<span class="text-[11px] font-mono text-rose-400 font-semibold block uppercase">02 // Harmonise</span>
+<h3 class="text-base font-bold text-white mt-1">Match the Training Domain</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            TIR-1 and Water Vapor (WV) channels continuously tracking overshooting convective cloud tops over Gangetic plain and Bay of Bengal dropping below -78°C.
+            The model trained on ERA5 but runs live on GFS. Units, sign conventions (e.g. convective inhibition) and precipitation-accumulation windows are aligned so live input means what the training input meant.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 text-xs font-mono text-rose-400 flex items-center justify-between">
-<span>Sub-4km Rapid Refresh</span>
+<span>ERA5 ↔ GFS Domain Adaptation</span>
 <i class="w-3.5 h-3.5" data-lucide="external-link"></i>
 </div>
 </div>
@@ -612,16 +729,16 @@
 <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800/80 flex flex-col justify-between group hover:border-amber-500/40 transition-colors">
 <div>
 <div class="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4 group-hover:scale-105 transition-transform">
-<i class="w-5 h-5" data-lucide="cpu"></i>
+<i class="w-5 h-5" data-lucide="brain-circuit"></i>
 </div>
-<span class="text-[11px] font-mono text-amber-400 font-semibold block uppercase">03 // Physics-Guided NN</span>
-<h3 class="text-base font-bold text-white mt-1">WRF Thermodynamic &amp; Orographic</h3>
+<span class="text-[11px] font-mono text-amber-400 font-semibold block uppercase">03 // Predict</span>
+<h3 class="text-base font-bold text-white mt-1">ConvGRU Nowcaster</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            WRF Thermodynamics &amp; Orographic coupling preventing unphysical dissipation over Himalayas and Gangetic basin; accounts for mountain lift and coastal breeze convergence.
+            Separate recurrent encoders read surface, wind and thermodynamic fields; a terrain-conditioned fusion trunk combines them; a shared decoder outputs severe-weather probability and 3-hour rainfall for every lead.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 text-xs font-mono text-amber-400 flex items-center justify-between">
-<span>Himalaya-to-Bay Coupling</span>
+<span>781,889 Parameters</span>
 <i class="w-3.5 h-3.5" data-lucide="external-link"></i>
 </div>
 </div>
@@ -631,35 +748,35 @@
 <div class="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-4 group-hover:scale-105 transition-transform">
 <i class="w-5 h-5" data-lucide="sparkles"></i>
 </div>
-<span class="text-[11px] font-mono text-emerald-400 font-semibold block uppercase">04 // Explainability (XAI)</span>
-<h3 class="text-base font-bold text-white mt-1">Statewide SHAP Attribution</h3>
+<span class="text-[11px] font-mono text-emerald-400 font-semibold block uppercase">04 // Calibrate &amp; Explain</span>
+<h3 class="text-base font-bold text-white mt-1">Physics-Rule Attribution</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            Statewide SHAP attribution giving duty meteorologists physics-based trust before sounding alerts, decomposing updraft speed, water vapor flux, and barometric gradient.
+            Probabilities are temperature-calibrated per lead, then combined with a terrain-aware flash-flood proxy. A rule-based physics breakdown (moisture, instability, wind, recent rain) explains each estimate — not a learned attribution method.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 text-xs font-mono text-emerald-400 flex items-center justify-between">
-<span>Automated Duty Briefings</span>
+<span>Per-Lead Temperature Scaling</span>
 <i class="w-3.5 h-3.5" data-lucide="external-link"></i>
 </div>
 </div>
 </div>
-<!-- Ingestion Diagnostic Status Strip -->
+<!-- Real Pipeline Facts Strip -->
 <div class="mt-6 p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-4 font-mono text-xs text-slate-300">
 <div class="flex items-center gap-2">
-<span class="px-1.5 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800">DWR FEEDS</span>
-<span>Kolkata S-Band &amp; Siliguri DWR Active</span>
+<span class="px-1.5 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800">INPUT</span>
+<span>NOAA GFS 0.25° f000 Analyses</span>
 </div>
 <div class="flex items-center gap-2">
 <span class="px-1.5 py-0.5 rounded bg-rose-950 text-rose-400 border border-rose-800">COVERAGE</span>
-<span>23 Districts Monitored 24/7</span>
+<span>825 Cells, 23 Districts</span>
 </div>
 <div class="flex items-center gap-2">
-<span class="px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800">MESONET</span>
-<span>184 AWS Stations Online</span>
+<span class="px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800">TRAINING</span>
+<span>ERA5, May–Oct 2021–2024</span>
 </div>
 <div class="flex items-center gap-2">
-<span class="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">SATELLITE</span>
-<span>INSAT-3DR SEVIRI Calibrated</span>
+<span class="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">STATIC INPUT</span>
+<span>SRTM Terrain Elevation</span>
 </div>
 </div>
 </div>
@@ -672,130 +789,31 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
 <div>
-<span class="text-xs font-mono uppercase tracking-wider text-rose-400 font-bold">// MULTI-DISTRICT OPERATIONAL TRIAGE</span>
+<span class="text-xs font-mono uppercase tracking-wider text-rose-400 font-bold">// DISTRICT ADVISORIES</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
-          District Monitoring: State-Wide Hazard Matrix &amp; Real-Time Projections
+          District Monitoring: Per-District Risk, Ranked
         </h2>
 <p class="text-slate-400 text-sm sm:text-base mt-2">
-          Continuous automated risk triage across all 23 districts divided into 3 meteorological command sectors.
+          The dashboard aggregates the 825-cell risk grid into 19 district zones, using the highest-risk cell in each district, and ranks them so the most concerning district always leads.
         </p>
 </div>
-<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-rose-950/50 border border-rose-800 text-xs font-mono text-rose-300 shrink-0">
-<span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
-<span>STATE DISASTER PROTOCOL ACTIVE</span>
+<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300 shrink-0" id="landing-district-status-pill">
+<span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+<span id="landing-district-status-text">LOADING LIVE DATA</span>
 </div>
 </div>
-<!-- District 3 Meteorological Command Sectors Tabs -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-<!-- Sector 1: Central Gangetic Basin -->
-<div class="p-4 rounded-lg bg-slate-900 border-2 border-red-500 cursor-pointer shadow-lg shadow-red-950/30">
-<div class="flex items-center justify-between mb-1.5">
-<span class="font-bold text-sm text-white flex items-center gap-1.5">
-<i class="w-4 h-4 text-sky-400" data-lucide="waves"></i>
-            Sector 1: Central Gangetic Basin
-          </span>
-<span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-red-600 text-white">RED ALERT (91%)</span>
+<!-- Top 3 Districts: live-fetched from the real API, same pattern as the radar map -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6" id="landing-district-cards">
+<div class="p-4 rounded-lg bg-slate-900/70 border border-slate-800 animate-pulse h-24"></div>
+<div class="p-4 rounded-lg bg-slate-900/70 border border-slate-800 animate-pulse h-24"></div>
+<div class="p-4 rounded-lg bg-slate-900/70 border border-slate-800 animate-pulse h-24"></div>
 </div>
-<p class="text-xs text-slate-300 font-mono">Nadia, Murshidabad, Purba Bardhaman, Birbhum, Hooghly</p>
-<div class="mt-2.5 pt-2 border-t border-slate-800 flex justify-between text-[11px] font-mono text-slate-400">
-<span>Precip: <strong class="text-sky-400">94.2 mm/hr</strong></span>
-<span>Saturation: <strong class="text-amber-400">96.8%</strong></span>
+<!-- Drilldown: the #1 ranked district, live -->
+<div class="rounded-xl bg-slate-900 border border-slate-800 p-6" id="landing-district-drilldown">
+<div class="text-xs font-mono text-slate-500">Loading current district risk&hellip;</div>
 </div>
 </div>
-<!-- Sector 2: North Bengal Foothills -->
-<div class="p-4 rounded-lg bg-slate-900/70 border border-amber-500/40 hover:border-amber-400 transition-colors cursor-pointer">
-<div class="flex items-center justify-between mb-1.5">
-<span class="font-bold text-sm text-slate-200 flex items-center gap-1.5">
-<i class="w-4 h-4 text-amber-400" data-lucide="mountain"></i>
-            Sector 2: North Bengal Foothills
-          </span>
-<span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-950 text-amber-400 border border-amber-800">ORANGE (84%)</span>
-</div>
-<p class="text-xs text-slate-400 font-mono">Darjeeling, Kalimpong, Jalpaiguri, Alipurduar, Cooch Behar</p>
-<div class="mt-2.5 pt-2 border-t border-slate-800 flex justify-between text-[11px] font-mono text-slate-400">
-<span>Landslide Risk: <strong class="text-rose-400">High</strong></span>
-<span>Teesta Basin Surge: <strong class="text-amber-400">Moderate</strong></span>
-</div>
-</div>
-<!-- Sector 3: Coastal Delta & Metro -->
-<div class="p-4 rounded-lg bg-slate-900/70 border border-rose-500/40 hover:border-rose-400 transition-colors cursor-pointer">
-<div class="flex items-center justify-between mb-1.5">
-<span class="font-bold text-sm text-slate-200 flex items-center gap-1.5">
-<i class="w-4 h-4 text-emerald-400" data-lucide="wind"></i>
-            Sector 3: Coastal Delta &amp; Metro
-          </span>
-<span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-rose-950 text-rose-300 border border-rose-800">RED WARN (88%)</span>
-</div>
-<p class="text-xs text-slate-400 font-mono">Kolkata, North &amp; South 24 Parganas, Howrah, East Medinipur</p>
-<div class="mt-2.5 pt-2 border-t border-slate-800 flex justify-between text-[11px] font-mono text-slate-400">
-<span>Kalbaishakhi Gust: <strong class="text-rose-400">82 km/h</strong></span>
-<span>Tidal Backing: <strong class="text-sky-400">Active</strong></span>
-</div>
-</div>
-</div>
-<!-- Detailed Drilldown Card: Jalangi & Bhagirathi Projections -->
-<div class="rounded-xl bg-slate-900 border border-slate-800 p-6">
-<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-<!-- Tactical Readout Left -->
-<div class="lg:col-span-7 space-y-4">
-<div class="flex flex-wrap items-center justify-between gap-2">
-<div class="flex items-center gap-2">
-<span class="px-2 py-0.5 rounded bg-red-600 text-white font-mono text-xs font-bold uppercase">CRITICAL RED STAGE</span>
-<span class="text-xs font-mono text-slate-400">TARGET: Jalangi &amp; Bhagirathi Basin</span>
-</div>
-<span class="text-xs font-mono font-bold text-amber-400">EST. SURGE RUNOFF: 165 min</span>
-</div>
-<div>
-<h3 class="text-xl font-bold text-white">Central Basin Multi-District Convective Surge &amp; Inundation</h3>
-<p class="text-sm text-slate-300 mt-1 leading-relaxed">
-              Coupled hydro-meteorological model predicts river surge runoff discharge of 1,580 m³/s across Jalangi and Bhagirathi corridors following quasi-stationary convective cell hovering over Murshidabad-Nadia border.
-            </p>
-</div>
-<!-- Quantitative Telemetry Strip -->
-<div class="grid grid-cols-3 gap-3">
-<div class="p-3 rounded bg-slate-950 border border-slate-800">
-<span class="text-[10px] font-mono uppercase text-slate-400 block">SUSTAINED PRECIP</span>
-<span class="text-lg font-mono font-bold text-sky-400">94.2 mm/hr</span>
-</div>
-<div class="p-3 rounded bg-slate-950 border border-slate-800">
-<span class="text-[10px] font-mono uppercase text-slate-400 block">SOIL SATURATION</span>
-<span class="text-lg font-mono font-bold text-amber-400">96.8 %</span>
-</div>
-<div class="p-3 rounded bg-slate-950 border border-slate-800">
-<span class="text-[10px] font-mono uppercase text-slate-400 block">DRAINAGE LATENCY</span>
-<span class="text-lg font-mono font-bold text-rose-400">Critical</span>
-</div>
-</div>
-<!-- Action Dispatch Preview & GP Evacuation recommendation -->
-<div class="p-3 rounded-lg bg-slate-950 border border-rose-900/60 flex flex-wrap items-center justify-between gap-3">
-<div class="flex items-center gap-2 text-xs font-mono text-rose-300">
-<i class="w-4 h-4 text-rose-400 shrink-0 animate-bounce" data-lucide="bell-ring"></i>
-<span>Action: Evacuate lowlands across 14 Gram Panchayats in Nadia &amp; Murshidabad</span>
-</div>
-<button class="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-mono text-xs font-semibold uppercase tracking-wider transition-colors" onclick="alert('WBSDMA Evacuation corridors mobilized for Nadia, Murshidabad, and Purba Bardhaman.')">
-              View Route
-            </button>
-</div>
-</div>
-<!-- Radar Mini View Right -->
-<div class="lg:col-span-5 flex flex-col gap-2">
-<div class="relative w-full aspect-video rounded-lg overflow-hidden border border-slate-700 bg-slate-950">
-<img alt="Doppler radar cross section" class="w-full h-full object-cover" src="/static/radar-hero.png"/>
-<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-950/80 font-mono text-[10px] text-sky-400 border border-slate-700">
-              ECHO CROSS-SECTION: SECTOR WB-CENTRAL
-            </div>
-<div class="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-slate-950/80 font-mono text-[10px] text-slate-300 border border-slate-700">
-              LAT: 23.50°N | LON: 88.45°E
-            </div>
-</div>
-<div class="flex items-center justify-between text-xs font-mono text-slate-400">
-<span>MODEL CONFIDENCE: <strong class="text-emerald-400">91.4% ENSEMBLE</strong></span>
-<span class="text-sky-400">SCIT Cell #WB-CEN-09</span>
-</div>
-</div>
-</div>
-</div>
-</div>
+</section>
 </section>
 <!-- ========================================== -->
 <!-- SECTION 6: id="impact"                     -->
@@ -804,88 +822,88 @@
 <section class="py-16 md:py-20 bg-slate-950/70 border-b border-slate-800/60" id="impact">
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="max-w-3xl mb-10">
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// CIVIL DEFENSE &amp; EARLY WARNING</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// IN-APP ALERTING</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
-        Impact: Automated WBSDMA &amp; NDMA CAP-v1.2 Civil Defense Grid
+        Impact: What the Alert System Actually Reaches
       </h2>
 <p class="text-slate-400 text-sm sm:text-base mt-2">
-        Transforming meteorological predictions into automated life-saving actions within 90 seconds of confidence threshold breach across all 23 districts of West Bengal.
+        StormSense can push a real alert to everyone currently viewing the dashboard. It is not connected to any government siren network, SMS gateway, or disaster-response service &mdash; the scope below is the honest, current reach.
       </p>
 </div>
-<!-- 3 Impact Pillars -->
+<!-- 3 Real Impact Features -->
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
 <!-- Feature 1 -->
-<div class="p-6 rounded-xl bg-slate-900 border border-slate-800 flex flex-col justify-between hover:border-rose-500/40 transition-colors">
+<div class="p-6 rounded-xl bg-slate-900 border border-rose-900/50 flex flex-col justify-between hover:border-rose-500/40 transition-colors">
 <div>
 <div class="w-10 h-10 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4">
-<i class="w-5 h-5" data-lucide="megaphone"></i>
+<i class="w-5 h-5" data-lucide="siren"></i>
 </div>
-<h3 class="text-base font-bold text-white">Statewide Siren &amp; VHF Lattice</h3>
+<h3 class="text-base font-bold text-white">In-App Siren Broadcast</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            Autonomous triggering of 48 high-decibel multi-tone sirens installed along sensitive riverbanks (Teesta, Bhagirathi, Jalangi, Damodar) and coastal cyclone stations from Digha to Sagar Island.
+            A full-screen alert with sound and a browser notification, sent to every connected viewer inside the model's current high-risk zone. Location is checked on each viewer's own device and never sent to the server.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs font-mono">
-<span class="text-slate-400">Active Siren Nodes:</span>
-<span class="text-emerald-400 font-bold">48 / 48 Online</span>
+<span class="text-slate-400">Reach:</span>
+<span class="text-rose-400 font-bold">Connected Viewers Only</span>
 </div>
 </div>
 <!-- Feature 2 -->
-<div class="p-6 rounded-xl bg-slate-900 border border-slate-800 flex flex-col justify-between hover:border-sky-500/40 transition-colors">
+<div class="p-6 rounded-xl bg-slate-900 border border-amber-900/50 flex flex-col justify-between hover:border-amber-500/40 transition-colors">
 <div>
-<div class="w-10 h-10 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-4">
-<i class="w-5 h-5" data-lucide="messages-square"></i>
+<div class="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4">
+<i class="w-5 h-5" data-lucide="megaphone"></i>
 </div>
-<h3 class="text-base font-bold text-white">Geo-Fenced Audio Dispatch</h3>
+<h3 class="text-base font-bold text-white">Advisory Bulletin Log</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            Multilingual (Bengali, Hindi, Nepali for hill regions, and English) automated warnings &amp; flood contour maps delivered via WhatsApp &amp; SMS directly to Gram Panchayat Pradhans and BDOs across all 23 districts.
+            Informational advisories posted to a standing, readable log &mdash; no interruption, no sound. A visitor who opens the dashboard later can still read what was posted.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs font-mono">
-<span class="text-slate-400">Dispatched Today:</span>
-<span class="text-sky-400 font-bold">14,280 Direct Alerts</span>
+<span class="text-slate-400">Persistence:</span>
+<span class="text-amber-400 font-bold">Readable After The Fact</span>
 </div>
 </div>
 <!-- Feature 3 -->
-<div class="p-6 rounded-xl bg-slate-900 border border-slate-800 flex flex-col justify-between hover:border-amber-500/40 transition-colors">
+<div class="p-6 rounded-xl bg-slate-900 border border-slate-800 flex flex-col justify-between hover:border-sky-500/40 transition-colors">
 <div>
-<div class="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4">
-<i class="w-5 h-5" data-lucide="truck"></i>
+<div class="w-10 h-10 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-4">
+<i class="w-5 h-5" data-lucide="clipboard-list"></i>
 </div>
-<h3 class="text-base font-bold text-white">NDRF &amp; SDRF Coordination</h3>
+<h3 class="text-base font-bold text-white">Operational Action Log</h3>
 <p class="text-xs text-slate-400 mt-2 leading-relaxed">
-            Direct telemetry sync with NDRF 2nd Battalion (Haringhata) and state SDRF deployment centers, routing rescue platoons, motorized boats, and emergency medical modules into pre-designated staging muster zones.
+            An operator can log a request for extended dissemination (e.g. cell broadcast). This does not reach any phone &mdash; it is an auditable record for handoff to a real disaster-management authority.
           </p>
 </div>
 <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs font-mono">
-<span class="text-slate-400">Battalions Pre-Staged:</span>
-<span class="text-amber-400 font-bold">12 Platoons Deployed</span>
+<span class="text-slate-400">Delivery status:</span>
+<span class="text-sky-400 font-bold">Logged, Not Sent</span>
 </div>
 </div>
 </div>
-<!-- Multipurpose Relief Readiness Card -->
+<!-- Honest Scope Card -->
 <div class="p-6 rounded-xl bg-slate-900 border border-slate-800 flex flex-col lg:flex-row items-center justify-between gap-6">
 <div class="space-y-2 lg:max-w-xl">
-<div class="flex items-center gap-2 text-xs font-mono text-rose-400 font-semibold uppercase">
-<i class="w-4 h-4" data-lucide="home"></i>
-<span>WBSDMA Emergency Shelter Protocol</span>
+<div class="flex items-center gap-2 text-xs font-mono text-sky-400 font-semibold uppercase">
+<i class="w-4 h-4" data-lucide="info"></i>
+<span>Honest Scope</span>
 </div>
-<h3 class="text-lg font-bold text-white">West Bengal Multi-Purpose Refuge Readiness</h3>
+<h3 class="text-lg font-bold text-white">No Physical Sirens, No SMS, No Government Integration Today</h3>
 <p class="text-xs sm:text-sm text-slate-400 leading-relaxed">
-          842 multi-purpose cyclone, flood, and landslide relief shelters connected with solar backup generators, reverse-osmosis water purification, satellite telemetry, and VHF repeaters. 412,000 / 680,000 ready capacity on immediate standby across Bengal.
+          Reaching people beyond this website &mdash; physical sirens, cell broadcast, SMS to the public &mdash; requires infrastructure and legal authority owned by government disaster-management bodies and telecom operators. StormSense can supply a risk feed to such a system; it cannot operate one itself.
         </p>
 </div>
 <div class="w-full lg:w-72 p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-3 font-mono">
 <div class="flex justify-between text-xs text-slate-300">
-<span>Standby Capacity:</span>
-<span class="text-emerald-400 font-bold">60.5% Mobilized</span>
+<span>Reach today:</span>
+<span class="text-emerald-400 font-bold">In-App Only</span>
 </div>
 <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-<div class="w-[60.5%] h-full bg-emerald-400 rounded-full"></div>
+<div class="w-[15%] h-full bg-emerald-400 rounded-full"></div>
 </div>
-<button class="w-full py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold tracking-wide uppercase transition-colors" onclick="alert('WBSDMA State Emergency Protocol Dispatched to all 23 District EOCs.')">
-          Dispatch State Protocol
-        </button>
+<a class="w-full block text-center py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold tracking-wide uppercase transition-colors" href="/app">
+          Try the Live Alert System
+        </a>
 </div>
 </div>
 </div>
@@ -897,121 +915,78 @@
 <section class="py-16 md:py-20 border-b border-slate-800/60" id="about">
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 <div class="max-w-3xl mb-10">
-<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// MISSION &amp; OPERATIONAL TRUST</span>
+<span class="text-xs font-mono uppercase tracking-wider text-sky-400 font-bold">// ABOUT</span>
 <h2 class="text-2xl sm:text-3xl font-bold text-white mt-1">
-        About StormSense: Mission-Critical Meteorological Governance
+        About StormSense
       </h2>
 <p class="text-slate-400 text-sm sm:text-base mt-2">
-        Built under National Monsoon Mission (Ministry of Earth Sciences, Govt. of India) in collaboration with IMD Kolkata &amp; WBSDMA for Smart India Hackathon. Emergency sirens cannot be sounded on vague statistical black-boxes.
+        An independent hackathon project exploring whether a compact deep-learning model can give useful early signal of severe convective weather over West Bengal from freely available global weather data. Not affiliated with, endorsed by, or operated on behalf of IMD, WBSDMA, NDMA, MoES, or any government body.
       </p>
 </div>
-<!-- Why Duty Meteorologists & District Magistrates Trust StormSense (XAI Table) -->
+<!-- Why the model's estimate is trustworthy: real physics-rule attribution, live-fetched -->
 <div class="rounded-xl bg-slate-900 border border-slate-800 p-6 space-y-6 mb-12">
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-800">
 <div>
-<h3 class="text-lg font-bold text-white font-mono">Why Duty Meteorologists &amp; District Magistrates Trust StormSense</h3>
-<p class="text-xs text-slate-400">Global SHAP Value Breakdown for Cell #NB-SLG-02 (Teesta Basin) &amp; Cell #WB-NAD-09 (Gangetic Basin)</p>
+<h3 class="text-lg font-bold text-white font-mono">Why the Model's Estimate Can Be Checked</h3>
+<p class="text-xs text-slate-400">Physics-based rule attribution for the current highest-risk cell &mdash; not a learned method (no SHAP, no LIME).</p>
 </div>
-<span class="text-xs font-mono px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 self-start sm:self-auto">
-          Regional Baseline Base-Value: <strong class="text-sky-400">12.0%</strong>
+<span class="text-xs font-mono px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 self-start sm:self-auto" id="landing-xai-status">
+          LOADING LIVE DATA
 </span>
 </div>
-<!-- Attribution Factors -->
-<div class="space-y-4">
-<!-- Item 1 -->
-<div class="space-y-1.5">
-<div class="flex justify-between text-xs font-mono">
-<span class="text-slate-200 font-semibold">Integrated Water Vapor (IWV) Convergence</span>
-<span class="text-rose-400 font-bold">+34.2% Risk Weight</span>
+<!-- Attribution Factors: live-fetched, real rank/impact from the model's own XAI endpoint -->
+<div class="space-y-4" id="landing-xai-factors">
+<div class="text-xs font-mono text-slate-500">Loading current attribution&hellip;</div>
 </div>
-<div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden">
-<div class="w-[34.2%] h-full bg-rose-500 rounded-full"></div>
-</div>
-<p class="text-[11px] text-slate-400">INSAT-3DR 6.7µm Water Vapor channel detected anomalous Bay of Bengal moisture plume convergence inland.</p>
-</div>
-<!-- Item 2 -->
-<div class="space-y-1.5">
-<div class="flex justify-between text-xs font-mono">
-<span class="text-slate-200 font-semibold">Thermodynamic CAPE Instability (&gt; 3,400 J/kg)</span>
-<span class="text-rose-400 font-bold">+26.2% Risk Weight</span>
-</div>
-<div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden">
-<div class="w-[26.2%] h-full bg-amber-500 rounded-full"></div>
-</div>
-<p class="text-[11px] text-slate-400">Pre-monsoon heating over Rarh terrain combined with humid Bay air fuels catastrophic vertical updraft potential.</p>
-</div>
-<!-- Item 3 -->
-<div class="space-y-1.5">
-<div class="flex justify-between text-xs font-mono">
-<span class="text-slate-200 font-semibold">Doppler Dual-Pol Echo Core Reflectivity (&gt; 60 dBZ)</span>
-<span class="text-rose-400 font-bold">+22.8% Risk Weight</span>
-</div>
-<div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden">
-<div class="w-[22.8%] h-full bg-sky-500 rounded-full"></div>
-</div>
-<p class="text-[11px] text-slate-400">Vertical cell ascent is continuously tracked by Kolkata S-Band and Siliguri radar elevation sweeps; no significant updraft signatures are present in the current cycle.</p>
-</div>
-<!-- Item 4 -->
-<div class="space-y-1.5">
-<div class="flex justify-between text-xs font-mono">
-<span class="text-slate-200 font-semibold">AWS Barometric Drop &amp; Surface Telemetry (-4.2 hPa)</span>
-<span class="text-rose-400 font-bold">+11.6% Risk Weight</span>
-</div>
-<div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden">
-<div class="w-[11.6%] h-full bg-emerald-500 rounded-full"></div>
-</div>
-<p class="text-[11px] text-slate-400">Automated Weather Stations recorded rapid microburst pressure surges and sudden boundary collapses.</p>
-</div>
-</div>
-<!-- Chief Duty Officer Sign-Off Status -->
+<!-- Model Identity Status -->
 <div class="p-4 rounded-lg bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
 <div class="flex items-center gap-3">
 <div class="w-8 h-8 rounded-full bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
 <i class="w-4 h-4" data-lucide="shield-check"></i>
 </div>
 <div>
-<span class="text-xs font-bold text-white block">Chief Duty Officer Sign-Off &amp; Statutory Verification Protocol</span>
-<span class="text-[11px] text-slate-400">Ensemble probability surpasses SOP-HYD-RED statutory threshold (85.0%) across targeted blocks</span>
+<span class="text-xs font-bold text-white block">Physics-Based, Not a Black Box</span>
+<span class="text-[11px] text-slate-400">Every attribution above traces to a real atmospheric field the model consumes &mdash; nothing is inferred after the fact.</span>
 </div>
 </div>
 <span class="px-3 py-1 rounded bg-slate-900 border border-sky-500/30 text-sky-400 text-xs font-mono font-bold shrink-0">
-          CONFIRMED BY STATE AI DESK
+          RULE-BASED ATTRIBUTION
         </span>
 </div>
 </div>
-<!-- Deployment CTA Banner & Partner Badges -->
+<!-- Honest Deployment CTA -->
 <div class="relative rounded-2xl bg-gradient-to-b from-slate-900 to-slate-950 border border-sky-500/40 p-8 md:p-12 overflow-hidden shadow-2xl">
 <div class="relative z-10 max-w-3xl space-y-4">
 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-950 border border-sky-800 text-xs font-mono text-sky-400">
-<span class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
-<span>API v2.4 • OPEN CAP / GEOJSON STATE SANDBOX READY</span>
+<span class="w-2 h-2 rounded-full bg-sky-400"></span>
+<span>OPEN SOURCE &middot; SELF-HOSTABLE</span>
 </div>
 <h2 class="text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight">
-          Ready to deploy StormSense across West Bengal State Disaster Management Authority (WBSDMA) &amp; District EOCs?
+          Want to try it, extend it, or build on it?
         </h2>
 <p class="text-sm sm:text-base text-slate-300 leading-relaxed">
-          Deploy hyper-local nowcasting across all 23 districts. Fully compatible with IMD radar formats (Rainbow, TITAN, UF, NetCDF) and NDMA Common Alerting Protocol (CAP-v1.2).
+          The full source, model checkpoints, and every backtest script used to produce the numbers on this page are on GitHub. Run it yourself, verify the results, or fork it for another region.
         </p>
 <div class="flex flex-wrap items-center gap-3 pt-3">
-<button class="px-6 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-sm shadow-xl shadow-red-600/30 transition-all flex items-center gap-2 font-mono" onclick="alert('Launching Statewide Operations Desk — 23 WB District DEOCs synchronized.')">
+<a class="px-6 py-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-sm shadow-xl shadow-sky-600/30 transition-all flex items-center gap-2 font-mono" href="/app">
+<i class="w-4 h-4" data-lucide="layout-dashboard"></i>
+<span>Open the Dashboard</span>
+</a>
+<a class="px-5 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm border border-slate-700 transition-colors flex items-center gap-2 font-mono" href="https://github.com/Souvik686/StormSense" target="_blank" rel="noopener">
+<i class="w-4 h-4" data-lucide="github"></i>
+<span>View Source on GitHub</span>
+</a>
+<a class="px-5 py-3 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-sky-400 font-semibold text-sm border border-sky-800/80 transition-colors flex items-center gap-2 font-mono" href="https://github.com/Souvik686/StormSense/blob/master/reports/STARTUP_AND_VERIFICATION.md" target="_blank" rel="noopener">
 <i class="w-4 h-4" data-lucide="terminal"></i>
-<span>Launch Statewide Operations Desk</span>
-</button>
-<button class="px-5 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm border border-slate-700 transition-colors flex items-center gap-2 font-mono" onclick="alert('Accessing WBSDMA GeoJSON API Schema &amp; documentation.')">
-<i class="w-4 h-4" data-lucide="code"></i>
-<span>Access WBSDMA GeoJSON API Docs</span>
-</button>
-<button class="px-5 py-3 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-sky-400 font-semibold text-sm border border-sky-800/80 transition-colors flex items-center gap-2 font-mono" onclick="alert('48/48 Bengal Sirens Acknowledged (Latency: 38ms)')">
-<i class="w-4 h-4" data-lucide="bell"></i>
-<span>Simulate State Siren Grid</span>
-</button>
+<span>Reproduce the Benchmarks</span>
+</a>
 </div>
-<!-- Partner Badges -->
+<!-- Real Tech Badges -->
 <div class="flex flex-wrap items-center gap-3 pt-4 border-t border-slate-800/80 font-mono text-xs">
-<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">IMD Kolkata (Alipore)</span>
-<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">MoES • Govt. of India</span>
-<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">WBSDMA</span>
-<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">NDMA CAP-v1.2</span>
+<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">PyTorch</span>
+<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">FastAPI</span>
+<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">ECMWF ERA5</span>
+<span class="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-slate-300 font-bold">NOAA GFS</span>
 </div>
 </div>
 </div>
@@ -1035,11 +1010,11 @@
 <span>StormSense West Bengal</span>
 </div>
 <p class="text-slate-400 leading-relaxed text-xs">
-          Statewide Multi-Doppler Radar Neural Network integration framework for sub-kilometer severe weather nowcasting across all 23 districts of West Bengal. Developed under National Monsoon Mission, Ministry of Earth Sciences (MoES), and Smart India Hackathon mandate.
+          AI severe-weather nowcasting prototype for West Bengal, built on NOAA GFS live data and ECMWF ERA5 training data. An independent hackathon project &mdash; experimental, and not an official warning service.
         </p>
 <div class="flex flex-wrap items-center gap-2 pt-1 font-mono text-[11px] text-amber-400">
 <i class="w-3.5 h-3.5 text-amber-400" data-lucide="phone-call"></i>
-<span>State Emergency Operations Center Hotline: <strong>1070 (Toll Free)</strong></span>
+<span>For official warnings, follow IMD. In an emergency in India: <strong>112</strong>, or West Bengal's state helpline <strong>1070</strong>.</span>
 </div>
 </div>
 <div class="space-y-2">
@@ -1050,40 +1025,40 @@
 <li><a class="hover:text-white transition-colors" href="#live-radar">Live Radar Feed</a></li>
 <li><a class="hover:text-white transition-colors" href="#how-it-works">How It Works</a></li>
 <li><a class="hover:text-white transition-colors" href="#district-monitoring">District Monitoring</a></li>
-<li><a class="hover:text-white transition-colors" href="#impact">Impact &amp; Defense</a></li>
+<li><a class="hover:text-white transition-colors" href="#impact">Impact &amp; Alerting</a></li>
 <li><a class="hover:text-white transition-colors" href="#about">About StormSense</a></li>
 </ul>
 </div>
 <div class="space-y-2">
-<span class="font-mono text-[11px] font-bold uppercase tracking-wider text-sky-400 block">Operational Protocols</span>
+<span class="font-mono text-[11px] font-bold uppercase tracking-wider text-sky-400 block">Data Sources</span>
 <ul class="space-y-1.5 text-slate-400 font-mono text-xs">
-<li class="text-emerald-400">SOP-HYD-RED Protocol Active</li>
-<li><a class="hover:text-white transition-colors" href="#impact">CAP-v1.2 Open GeoJSON Feeds</a></li>
-<li><a class="hover:text-white transition-colors" href="#impact">WMO Severe Alert Standard</a></li>
-<li><a class="hover:text-white transition-colors" href="#impact">Bengal Siren &amp; VHF APIs</a></li>
+<li>NOAA GFS 0.25° (live input)</li>
+<li>ECMWF ERA5 (training data)</li>
+<li>RainViewer (radar mosaic)</li>
+<li>SRTM (terrain elevation)</li>
 </ul>
 </div>
 <div class="space-y-2">
-<span class="font-mono text-[11px] font-bold uppercase tracking-wider text-sky-400 block">State Telemetry</span>
+<span class="font-mono text-[11px] font-bold uppercase tracking-wider text-sky-400 block">Model Facts</span>
 <div class="space-y-1 font-mono text-[11px] text-slate-400">
 <div class="text-white flex items-center gap-1.5">
-<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-            Active Node: WB-KOL-STATE-AI
+<span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+            781,889 Parameters
           </div>
-<div>Lookback: 120m | Ahead: 360m</div>
-<div>Inference Latency: 390ms</div>
-<span class="inline-block px-2 py-0.5 rounded bg-slate-900 text-rose-400 border border-rose-900/50 mt-1">Tier-4 Resilient Node</span>
+<div>Grid: 0.25° (~28 km), 825 cells</div>
+<div>Leads: +2h to +6h</div>
+<span class="inline-block px-2 py-0.5 rounded bg-slate-900 text-sky-300 border border-sky-900/50 mt-1">Calibrated Per Lead</span>
 </div>
 </div>
 </div>
 <div class="pt-6 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-400 font-mono">
 <div>
-        © 2025 StormSense. Ministry of Earth Sciences (MoES), Govt. of India &amp; WBSDMA, Govt. of West Bengal.
+        © 2026 Souvik Sarkar. Weather data: ECMWF ERA5 (Copernicus), NOAA GFS, OpenWeather.
       </div>
 <div class="flex items-center gap-4">
-<a class="hover:text-slate-300 transition-colors" href="#impact">State Safety Disclaimer</a>
+<a class="hover:text-slate-300 transition-colors" href="#about">Safety Notice</a>
 <span>•</span>
-<a class="hover:text-slate-300 transition-colors" href="#about">API Schema &amp; Tokens</a>
+<a class="hover:text-slate-300 transition-colors" href="https://github.com/Souvik686/StormSense" target="_blank" rel="noopener">Source Code</a>
 </div>
 </div>
 </div>
@@ -1094,6 +1069,392 @@
     if (window.lucide) {
       window.lucide.createIcons();
     }
+  });
+</script>
+<!-- Live Radar Map: real Google Maps SDK (same as the dashboard), with a
+     live RainViewer radar overlay and the real West Bengal state outline. -->
+<script>
+  function stormsenseInitLandingRadarMap() {
+    var mapEl = document.getElementById('landing-radar-map');
+    if (!mapEl || typeof google === 'undefined' || !google.maps) return;
+    if (mapEl._stormsenseMapInited) return;
+    mapEl._stormsenseMapInited = true;
+
+    // Dark map style close in tone to the dashboard's own basemap styling.
+    var DARK_STYLE = [
+      { elementType: 'geometry', stylers: [{ color: '#0b101d' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#0b101d' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#8ea0c2' }] },
+      { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#334155' }] },
+      { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#131a2b' }] },
+      { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+      { featureType: 'road', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+      { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0a0e1a' }] }
+    ];
+
+    var map = new google.maps.Map(mapEl, {
+      center: { lat: 23.8, lng: 87.9 },
+      zoom: 6,
+      minZoom: 5,
+      // Matches the dashboard's own radar map (frontend/js/app.js initRadarMap,
+      // maxZoom: 16). The base map's maxZoom used to be capped at 10 -- the
+      // same number as the RainViewer overlay's maxZoom below -- which made
+      // Google refuse to zoom the WHOLE MAP past level 10 and show its own
+      // "Zoom Level Not Supported" tiles. The overlay's lower maxZoom (RainViewer
+      // has no native tiles past ~zoom 7-10) only needs to stop the RADAR
+      // OVERLAY from zooming further; it must not cap the base map too.
+      maxZoom: 16,
+      disableDefaultUI: true,
+      zoomControl: true,
+      styles: DARK_STYLE
+    });
+
+    // West Bengal state outline, from this app's own boundary API.
+    fetch('/api/boundaries/state')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (geojson) {
+        if (!geojson) return;
+        map.data.addGeoJson(geojson);
+        map.data.setStyle({
+          strokeColor: '#38bdf8',
+          strokeWeight: 2,
+          strokeOpacity: 0.9,
+          fillOpacity: 0
+        });
+      })
+      .catch(function (err) {
+        console.warn('Landing radar: state boundary unavailable', err);
+      });
+
+    var statusText = document.getElementById('landing-radar-status-text');
+    var statusPill = document.getElementById('landing-radar-status-pill');
+    var scanAgeEl = document.getElementById('landing-radar-scan-age');
+
+    function setStatus(text, dotClass) {
+      if (statusText) statusText.textContent = text;
+      var dot = statusPill ? statusPill.querySelector('span') : null;
+      if (dot) dot.className = 'w-2 h-2 rounded-[1px] ' + dotClass;
+    }
+
+    // RainViewer radar as a SINGLE stitched image (google.maps.GroundOverlay),
+    // not a per-tile google.maps.ImageMapType.
+    //
+    // The previous version requested RainViewer tiles one at a time via
+    // getTileUrl and let Google Maps' own tiling grid lay them out. RainViewer
+    // has no real detail past zoom ~7, so every tile past that was the same
+    // zoom-7 image independently upscaled -- and the seams between adjacent
+    // independently-upscaled tiles showed up as a visible grid cutting through
+    // continuous rain blobs. A GroundOverlay is ONE image stretched across ONE
+    // bounding box, the same fix already applied to the dashboard's Leaflet
+    // radar (frontend/js/app.js loadRainViewerRadar), which now gets its
+    // mosaic from this same backend endpoint. Both radar displays must render
+    // identically, so both call the same /api/radar/mosaic PNG.
+    var radarOverlay = null;
+    var lastScanTime = null;
+
+    function loadRadarFrame() {
+      fetch('/api/radar/mosaic?t=' + Date.now())
+        .then(function (r) {
+          if (!r.ok) throw new Error('Radar mosaic HTTP ' + r.status);
+          var scanTime = Number(r.headers.get('X-Scan-Time-Unix')) || null;
+          return r.blob().then(function (blob) { return { blob: blob, scanTime: scanTime }; });
+        })
+        .then(function (result) {
+          if (result.scanTime && result.scanTime === lastScanTime) {
+            setStatus('LIVE · STREAM SYNCED', 'bg-emerald-400 animate-pulse');
+            return;
+          }
+          lastScanTime = result.scanTime;
+
+          var imageUrl = URL.createObjectURL(result.blob);
+          // Matches _RADAR_MOSAIC_BOUNDS in backend/main.py's /api/radar/mosaic.
+          var bounds = {
+            north: 29.0, south: 19.0, west: 83.0, east: 91.0
+          };
+
+          if (radarOverlay) {
+            radarOverlay.setMap(null);
+            radarOverlay = null;
+          }
+          radarOverlay = new google.maps.GroundOverlay(imageUrl, bounds, { opacity: 0.65 });
+          radarOverlay.setMap(map);
+
+          setStatus('LIVE · STREAM SYNCED', 'bg-emerald-400 animate-pulse');
+          if (scanAgeEl) {
+            if (result.scanTime) {
+              var scanDate = new Date(result.scanTime * 1000);
+              var ageMin = Math.max(0, Math.round((Date.now() - scanDate.getTime()) / 60000));
+              scanAgeEl.textContent = (ageMin <= 1 ? 'just now' : ageMin + ' min ago');
+            } else {
+              scanAgeEl.textContent = 'just now';
+            }
+          }
+        })
+        .catch(function (err) {
+          console.warn('Landing radar: mosaic unavailable', err);
+          setStatus('RADAR OFFLINE', 'bg-rose-400');
+          if (scanAgeEl) scanAgeEl.textContent = 'unavailable';
+        });
+    }
+
+    loadRadarFrame();
+    setInterval(loadRadarFrame, 2 * 60 * 1000);
+  }
+
+  // The Maps SDK loads asynchronously with key failover (see the loader in
+  // <head>), so google.maps may not exist yet at DOMContentLoaded. Init once
+  // the SDK genuinely signals ready, or immediately if it already has.
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.STORMSENSE_MAPS_READY) {
+      stormsenseInitLandingRadarMap();
+    } else {
+      document.addEventListener('stormsense:maps-ready', stormsenseInitLandingRadarMap);
+      document.addEventListener('stormsense:maps-exhausted', function () {
+        var statusText = document.getElementById('landing-radar-status-text');
+        var scanAgeEl = document.getElementById('landing-radar-scan-age');
+        if (statusText) statusText.textContent = 'MAP UNAVAILABLE';
+        if (scanAgeEl) scanAgeEl.textContent = 'unavailable';
+      });
+    }
+  });
+</script>
+</script>
+<!-- Live District Cards: real data from this app's own API, same origin.
+     Re-fetches every 5 minutes, matching the dashboard's own refresh cadence,
+     so the top districts and percentages track real conditions as the
+     underlying GFS-driven forecast changes -- not a one-time snapshot. -->
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var cardsEl = document.getElementById('landing-district-cards');
+    var drillEl = document.getElementById('landing-district-drilldown');
+    var statusText = document.getElementById('landing-district-status-text');
+    var statusPill = document.getElementById('landing-district-status-pill');
+    if (!cardsEl) return;
+
+    function setStatus(text, dotClass) {
+      if (statusText) statusText.textContent = text;
+      var dot = statusPill ? statusPill.querySelector('span') : null;
+      if (dot) dot.className = 'w-2 h-2 rounded-full ' + dotClass;
+    }
+
+    var LEVEL_STYLE = {
+      red:    { badge: 'bg-red-600 text-white',      border: 'border-2 border-red-500 shadow-lg shadow-red-950/30' },
+      orange: { badge: 'bg-orange-950 text-orange-300 border border-orange-800', border: 'border border-orange-500/40 hover:border-orange-400' },
+      yellow: { badge: 'bg-amber-950 text-amber-400 border border-amber-800',    border: 'border border-amber-500/40 hover:border-amber-400' },
+      green:  { badge: 'bg-emerald-950 text-emerald-300 border border-emerald-800', border: 'border border-slate-800 hover:border-slate-700' }
+    };
+    var LEVEL_LABEL = { red: 'WARNING', orange: 'ALERT', yellow: 'WATCH', green: 'NORMAL' };
+
+    function loadDistricts() {
+    fetch('/api/nowcast/districts?lead=0&mode=live')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (districts) {
+        if (!Array.isArray(districts) || !districts.length) throw new Error('empty');
+        var sorted = districts.slice().sort(function (a, b) {
+          return (b.overall_pct || 0) - (a.overall_pct || 0);
+        });
+        var top3 = sorted.slice(0, 3);
+
+        cardsEl.innerHTML = top3.map(function (d) {
+          var s = LEVEL_STYLE[d.risk_level] || LEVEL_STYLE.green;
+          var label = LEVEL_LABEL[d.risk_level] || 'NORMAL';
+          return (
+            '<div class="p-4 rounded-lg bg-slate-900 ' + s.border + ' cursor-default">' +
+              '<div class="flex items-center justify-between mb-1.5">' +
+                '<span class="font-bold text-sm text-white">' + d.district + '</span>' +
+                '<span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold ' + s.badge + '">' + label + ' (' + d.overall_pct + '%)</span>' +
+              '</div>' +
+              '<div class="mt-2.5 pt-2 border-t border-slate-800 flex justify-between text-[11px] font-mono text-slate-400">' +
+                '<span>Thunderstorm: <strong class="text-sky-400">' + d.thunderstorm_pct + '%</strong></span>' +
+                '<span>Rain (3h): <strong class="text-amber-400">' + d.heavy_rainfall_mm_3h + ' mm</strong></span>' +
+              '</div>' +
+            '</div>'
+          );
+        }).join('');
+
+        var top = top3[0];
+        if (top && drillEl) {
+          var s = LEVEL_STYLE[top.risk_level] || LEVEL_STYLE.green;
+          drillEl.innerHTML =
+            '<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">' +
+              '<div class="lg:col-span-12 space-y-4">' +
+                '<div class="flex flex-wrap items-center justify-between gap-2">' +
+                  '<div class="flex items-center gap-2">' +
+                    '<span class="px-2 py-0.5 rounded ' + s.badge + ' font-mono text-xs font-bold uppercase">' + (LEVEL_LABEL[top.risk_level] || 'NORMAL') + '</span>' +
+                    '<span class="text-xs font-mono text-slate-400">HIGHEST CURRENT RISK: ' + top.district + '</span>' +
+                  '</div>' +
+                  '<span class="text-xs font-mono font-bold text-slate-400">' + (top.valid_until || '') + '</span>' +
+                '</div>' +
+                '<div>' +
+                  '<h3 class="text-xl font-bold text-white">' + top.title + '</h3>' +
+                  '<p class="text-sm text-slate-300 mt-1 leading-relaxed">' + top.body + '</p>' +
+                '</div>' +
+                '<div class="grid grid-cols-3 gap-3">' +
+                  '<div class="p-3 rounded bg-slate-950 border border-slate-800">' +
+                    '<span class="text-[10px] font-mono uppercase text-slate-400 block">THUNDERSTORM</span>' +
+                    '<span class="text-lg font-mono font-bold text-sky-400">' + top.thunderstorm_pct + '%</span>' +
+                  '</div>' +
+                  '<div class="p-3 rounded bg-slate-950 border border-slate-800">' +
+                    '<span class="text-[10px] font-mono uppercase text-slate-400 block">RAIN (3H)</span>' +
+                    '<span class="text-lg font-mono font-bold text-amber-400">' + top.heavy_rainfall_mm_3h + ' mm</span>' +
+                  '</div>' +
+                  '<div class="p-3 rounded bg-slate-950 border border-slate-800">' +
+                    '<span class="text-[10px] font-mono uppercase text-slate-400 block">FLASH-FLOOD PROXY</span>' +
+                    '<span class="text-lg font-mono font-bold text-rose-400">' + top.flash_flood_pct + '%</span>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-500">' +
+                  'Aggregation: ' + top.aggregation_method +
+                '</div>' +
+              '</div>' +
+            '</div>';
+        }
+
+        setStatus('LIVE · UPDATED NOW', 'bg-emerald-400 animate-pulse');
+      })
+      .catch(function (err) {
+        console.warn('Landing district data unavailable', err);
+        setStatus('DATA UNAVAILABLE', 'bg-rose-400');
+        cardsEl.innerHTML = '<div class="md:col-span-3 p-4 rounded-lg bg-slate-900/60 border border-slate-800 text-xs font-mono text-slate-500">Live district data is temporarily unavailable. Open the dashboard to view current risk.</div>';
+        if (drillEl) drillEl.innerHTML = '';
+      });
+    }
+
+    loadDistricts();
+    setInterval(loadDistricts, 5 * 60 * 1000);
+  });
+</script>
+<!-- Live XAI Attribution: real data from this app's own API, same origin.
+     Re-fetches every 5 minutes for the same reason as the district cards. -->
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var factorsEl = document.getElementById('landing-xai-factors');
+    var statusEl = document.getElementById('landing-xai-status');
+    if (!factorsEl) return;
+
+    var IMPACT_COLOR = {
+      Dominant:  'bg-rose-500',
+      High:      'bg-amber-500',
+      Moderate:  'bg-sky-500',
+      Secondary: 'bg-emerald-500'
+    };
+    // The API gives rank + impact label, not a numeric weight -- bar widths
+    // below are a fixed, decreasing scale by rank, not an invented percentage.
+    var RANK_WIDTH = { 1: 90, 2: 68, 3: 46, 4: 28 };
+
+    function loadXai() {
+    fetch('/api/nowcast/xai?mode=live&lead=0')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (!d.factors || !d.factors.length) throw new Error('no factors');
+        factorsEl.innerHTML = d.factors.map(function (f) {
+          var width = RANK_WIDTH[f.importance_rank] || 20;
+          var color = IMPACT_COLOR[f.impact] || 'bg-slate-500';
+          return (
+            '<div class="space-y-1.5">' +
+              '<div class="flex justify-between text-xs font-mono">' +
+                '<span class="text-slate-200 font-semibold">' + f.name + '</span>' +
+                '<span class="text-rose-400 font-bold">' + f.impact + ' &middot; ' + f.value + '</span>' +
+              '</div>' +
+              '<div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden">' +
+                '<div class="h-full ' + color + ' rounded-full" style="width:' + width + '%"></div>' +
+              '</div>' +
+              '<p class="text-[11px] text-slate-400">' + f.physical_role + '</p>' +
+            '</div>'
+          );
+        }).join('');
+        if (statusEl) statusEl.textContent = 'LIVE · ' + (d.location || 'CURRENT CELL');
+      })
+      .catch(function (err) {
+        console.warn('Landing XAI data unavailable', err);
+        factorsEl.innerHTML = '<div class="text-xs font-mono text-slate-500">Live attribution is temporarily unavailable. Open the dashboard to view it.</div>';
+        if (statusEl) statusEl.textContent = 'DATA UNAVAILABLE';
+      });
+    }
+
+    loadXai();
+    setInterval(loadXai, 5 * 60 * 1000);
+  });
+</script>
+<!-- Live Hero Card: real data from this app's own API, same origin.
+     Re-fetches every 5 minutes for the same reason as the sections above. -->
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var ribbonText = document.getElementById('landing-hero-ribbon-text');
+    var ribbonBadge = document.getElementById('landing-hero-ribbon-badge');
+    var ribbon = document.getElementById('landing-hero-ribbon');
+    var hudDistrict = document.getElementById('landing-hero-hud-district');
+    var statusBadge = document.getElementById('landing-hero-status-badge');
+    var statusText = document.getElementById('landing-hero-status-text');
+    var rainValue = document.getElementById('landing-hero-rain-value');
+    var rainDistrict = document.getElementById('landing-hero-rain-district');
+    var peakPct = document.getElementById('landing-hero-peak-pct');
+    var severityBar = document.getElementById('landing-hero-severity-bar');
+    var severityLabel = document.getElementById('landing-hero-severity-label');
+    if (!ribbonText) return;
+
+    var LEVEL_BG = { red: 'bg-red-800', orange: 'bg-orange-800', yellow: 'bg-amber-800', green: 'bg-emerald-800' };
+    var LEVEL_LABEL = { red: 'SEVERE RISK ACTIVE', orange: 'ELEVATED RISK', yellow: 'WATCH CONDITIONS', green: 'ROUTINE MONITORING' };
+    var LEVEL_BADGE = { red: 'WARNING', orange: 'ALERT', yellow: 'WATCH', green: 'NORMAL' };
+
+    function loadHero() {
+    fetch('/api/nowcast/districts?lead=0&mode=live')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (districts) {
+        if (!Array.isArray(districts) || !districts.length) throw new Error('empty');
+        var top = districts.slice().sort(function (a, b) {
+          return (b.overall_pct || 0) - (a.overall_pct || 0);
+        })[0];
+
+        var level = top.risk_level || 'green';
+        if (ribbon) ribbon.className = ribbon.className.replace(/bg-slate-800\b/, LEVEL_BG[level] || 'bg-slate-800');
+        if (ribbonText) ribbonText.textContent = LEVEL_LABEL[level] || 'ROUTINE MONITORING';
+        if (ribbonBadge) ribbonBadge.textContent = (LEVEL_BADGE[level] || 'NORMAL') + ' · ' + top.overall_pct + '%';
+        if (hudDistrict) hudDistrict.textContent = 'PEAK: ' + top.district.toUpperCase();
+        if (statusText) statusText.textContent = (LEVEL_BADGE[level] || 'NORMAL') + ' · ' + top.stage;
+        if (rainValue) rainValue.innerHTML = Number(top.heavy_rainfall_mm_3h).toFixed(1) + ' <span class="text-xs text-slate-300 font-normal">mm</span>';
+        if (rainDistrict) rainDistrict.textContent = top.district.toUpperCase() + ' · 3H';
+        if (peakPct) peakPct.textContent = top.overall_pct + '% (' + (LEVEL_BADGE[level] || 'NORMAL') + ')';
+
+        // Severity bar: fill segments proportional to overall_pct, 8 segments.
+        if (severityBar) {
+          var filled = Math.max(1, Math.min(8, Math.round((top.overall_pct || 0) / 12.5)));
+          var barColor = level === 'red' ? 'bg-red-500' : level === 'orange' ? 'bg-orange-500' : level === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500';
+          var segs = severityBar.children;
+          for (var i = 0; i < segs.length; i++) {
+            segs[i].className = 'h-full flex-1 ' + (i < filled ? barColor : 'bg-slate-700') +
+              (i === 0 ? ' rounded-l' : '') + (i === segs.length - 1 ? ' rounded-r' : '');
+          }
+        }
+        if (severityLabel) {
+          var idx = Math.max(1, Math.min(8, Math.round((top.overall_pct || 0) / 12.5)));
+          severityLabel.textContent = (LEVEL_BADGE[level] || 'NORMAL') + ' (' + idx + '/8)';
+        }
+      })
+      .catch(function (err) {
+        console.warn('Landing hero data unavailable', err);
+        if (ribbonText) ribbonText.textContent = 'LIVE DATA UNAVAILABLE';
+        if (ribbonBadge) ribbonBadge.textContent = '—';
+        if (hudDistrict) hudDistrict.textContent = 'DATA UNAVAILABLE';
+        if (statusText) statusText.textContent = 'UNAVAILABLE';
+        if (peakPct) peakPct.textContent = '—';
+        if (severityLabel) severityLabel.textContent = '—';
+      });
+    }
+
+    loadHero();
+    setInterval(loadHero, 5 * 60 * 1000);
   });
 </script>
 </body></html>

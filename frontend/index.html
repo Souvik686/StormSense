@@ -1002,6 +1002,21 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 </div>
 <!-- District Cards Grid -->
 <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="district-advisories-grid"></div>
+<!-- Broadcast Advisory Log: every advisory an admin has published, persistent
+     and readable by anyone who opens this view -- including a visitor who
+     was not online at the moment it was posted. Fed by GET /api/advisories
+     and refreshed live when a new one arrives over the siren/advisory SSE
+     stream (see subscribeToSirenStream -> refreshAdvisoryFeed). -->
+<div class="flex flex-col gap-4">
+<div class="flex items-center gap-2.5">
+<span class="material-symbols-outlined text-amber-400 text-xl">campaign</span>
+<h3 class="text-white text-lg font-bold tracking-tight">Broadcast Advisory Log</h3>
+<span class="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-amber-500/15 border border-amber-500/40 text-amber-400 font-mono">IN-APP BULLETIN</span>
+</div>
+<div class="flex flex-col gap-3" id="advisory-log-list">
+<div class="text-sm text-slate-500 italic px-1">No advisories published yet.</div>
+</div>
+</div>
 </div>
 <!-- VIEW 4: AI Nowcast & Model Benchmark Desk -->
 <div class="p-6 lg:p-8 flex flex-col gap-8 max-w-[1700px] w-full mx-auto hidden" id="view-wrf" style="padding-bottom: 5rem;">
@@ -1634,6 +1649,11 @@ Atmospheric Modality &amp; Physical Diagnostic Attribution
 <div>CHANNEL: <span class="text-white">In-app overlay + sound + browser notification</span></div>
 <div>NOT INCLUDED: <span class="text-amber-300">No SMS, no physical siren, no government alerting system</span></div>
 </div>
+<div class="flex flex-col gap-1.5">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Admin Password</label>
+<input type="password" id="siren-admin-password" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-red-500" placeholder="Required to dispatch" onkeydown="if(event.key==='Enter')window.executeSirenDispatch()">
+<span class="text-[10px] text-red-300 hidden" id="siren-admin-password-error">Incorrect password.</span>
+</div>
 <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
 <button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeSirenModal()">
 Cancel
@@ -1665,6 +1685,11 @@ Cancel
 <div class="flex flex-col gap-1.5">
 <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Message</label>
 <textarea id="advisory-message-input" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white resize-none focus:outline-none focus:border-amber-500" placeholder="e.g. Conditions are being monitored across South 24 Parganas. No action required at this time."></textarea>
+</div>
+<div class="flex flex-col gap-1.5">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Admin Password</label>
+<input type="password" id="advisory-admin-password" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" placeholder="Required to publish">
+<span class="text-[10px] text-red-300 hidden" id="advisory-admin-password-error">Incorrect password.</span>
 </div>
 <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
 <button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeAdvisoryModal()">
@@ -1702,6 +1727,11 @@ This records your request as a timestamped, auditable log entry -- for handoff t
 <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Note (optional)</label>
 <textarea id="operational-action-message-input" rows="2" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white resize-none focus:outline-none focus:border-slate-500" placeholder="e.g. Recommend cell broadcast for coastal blocks of Purba Medinipur."></textarea>
 </div>
+<div class="flex flex-col gap-1.5">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Admin Password</label>
+<input type="password" id="operational-action-admin-password" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-slate-500" placeholder="Required to log request">
+<span class="text-[10px] text-red-300 hidden" id="operational-action-admin-password-error">Incorrect password.</span>
+</div>
 <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
 <button class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold" onclick="window.closeOperationalActionModal()">
 Cancel
@@ -1727,6 +1757,11 @@ Cancel
 <div id="siren-alert-time"></div>
 <div id="siren-alert-why" class="text-red-200/70"></div>
 </div>
+<!-- WHY THIS ALERT: the model evidence behind the dispatch -- peak risk %,
+     where that peak is, and (if present) where risk is forecast to rise next
+     -- not just the operator's free-text message. Populated by
+     showSirenAlert() in app.js from the alert's target_area/advance_area. -->
+<div id="siren-alert-basis" class="w-full max-w-md text-left flex flex-col gap-2 text-[11px] font-mono text-red-100/90 bg-red-900/30 border border-red-400/30 rounded-lg px-3 py-2.5 hidden"></div>
 <div class="text-[11px] text-red-200/70 border border-red-400/30 rounded-lg px-3 py-2 leading-relaxed max-w-md">
 In-app advisory broadcast from this dashboard's operator. Not an official
 government alert and not issued by IMD or any disaster-management authority.
