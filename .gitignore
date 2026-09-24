@@ -86,3 +86,15 @@ Data/outputs/checkpoints_v*/
 
 # --- Leftover debug scripts ---
 dump.py
+
+# --- Internal dev notes, not needed to run the app ------------------
+# Real project history (acceptance reports, session handoffs, experiment
+# dumps), but referenced only in comments/error-message strings pointing a
+# human reader at them -- never opened or read by any runtime code path.
+# Kept on disk, not in the public repo.
+docs/handoffs/
+reports/
+
+# --- Orphaned doc: described three .docx files that live under ------
+# docs/manual/, not here; this folder itself never held them.
+DOCUMENTATION/

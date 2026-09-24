@@ -12,6 +12,18 @@
 
 StormSense forecasts severe convective weather (thunderstorms, heavy rainfall, flash-flood risk) 2–6 hours ahead over a 0.25° grid covering West Bengal.
 
+<br>
+
+<img src="frontend/static/screenshots/dashboard-live-overview.png" alt="StormSense live nowcasting dashboard" width="100%">
+
+</div>
+
+<br>
+
+<div align="center">
+
+**[Overview](#-overview)** · **[Features](#-features)** · **[Tech Stack](#-tech-stack)** · **[Project Structure](#-project-structure)** · **[Installation](#-installation-guide)** · **[Testing](#-testing)** · **[Model & Evaluation](#-model--evaluation-information)** · **[Limitations](#️-limitations)** · **[Security](#-security-notes)**
+
 </div>
 
 ---
@@ -30,6 +42,8 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 - **Live mode:** Fetches the newest available NOAA GFS analysis, harmonizes it onto the model's grid, and runs real inference.
 - **Historical mode:** Replays a single frozen, real event (Cyclone Remal, 26 May 2024) using the model's actual ERA5-input test-time forecast.
 
+<p align="center"><img src="frontend/static/screenshots/dashboard-historical-remal.png" alt="Historical case study: Cyclone Remal replay" width="85%"></p>
+
 ## 🧠 Advanced Machine Learning
 - **Model:** SevereWeatherNetV2 — a tri-stream ConvGRU feeding a shared multi-horizon decoder (781,889 parameters).
 - **Outputs:** Severe-weather probability, 3-hour rainfall (mm), and a derived flash-flood risk proxy.
@@ -39,6 +53,21 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 - **Wall-clock horizons:** NOW, +2h, +4h, +6h dynamic UI buttons.
 - **XAI (Explainable AI):** Rule-based factor attribution describing which atmospheric factors drove a given forecast.
 - **Live Observations:** Real-time OpenWeatherMap surface station data integration.
+
+<br>
+
+<table>
+<tr>
+<td width="33%"><img src="frontend/static/screenshots/risk-map-overview.png" alt="Spatial risk map over West Bengal districts"></td>
+<td width="33%"><img src="frontend/static/screenshots/district-advisories.png" alt="District-level advisories and civil defence protocols"></td>
+<td width="33%"><img src="frontend/static/screenshots/xai-attribution.png" alt="Explainable AI atmospheric attribution panel"></td>
+</tr>
+<tr>
+<td align="center"><sub>Spatial risk map, live mode</sub></td>
+<td align="center"><sub>District advisories & civil defence protocols</sub></td>
+<td align="center"><sub>XAI atmospheric attribution</sub></td>
+</tr>
+</table>
 
 ---
 
@@ -57,35 +86,39 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 
 # 📂 Project Structure
 
-
-StormSense
-├── backend              # FastAPI app, OpenWeather client, config
-├── configs              # default.yaml (production V2) + candidates
-├── Data
-│   ├── BOUNDARIES       # West Bengal / district GeoJSON
-│   ├── outputs          # Production + fallback model checkpoints
-│   └── INSAT            # Satellite archive (not committed)
-├── docs                 # Manuals and development handoff notes
-├── frontend             # Dashboard (index.html, js, css)
-├── processed
-│   └── cache            # Preprocessed ERA5/DEM and Live GFS cache
-├── reports              # Evaluation results and promotion evidence
-├── scripts              # Training, evaluation, and backtest tooling
-├── src
-│   ├── api              # Legacy FastAPI app
-│   ├── data             # Dataset loaders, preprocessing
-│   ├── features         # Normalization, target construction
-│   ├── inference        # Live inference, GFS/INSAT pipelines
-│   ├── models           # SevereWeatherNetV2 architectures
-│   └── training         # Losses, metrics, calibration
-├── tests                # Unit, API and Playwright browser tests
+```text
+StormSense/
+├── backend/                 # FastAPI app: routes, OpenWeather client, config
+├── configs/                 # default.yaml (production V2) + candidate configs
+├── Data/
+│   ├── BOUNDARIES/          # West Bengal state & district GeoJSON
+│   ├── outputs/             # Production + fallback model checkpoints
+│   └── INSAT/               # Satellite archive (not committed; see setup)
+├── docs/
+│   └── manual/              # Generated reference docs (.docx/.pdf)
+├── frontend/
+│   ├── static/screenshots/  # Dashboard screenshots used in this README
+│   └── ...                  # Dashboard client (index.html, js/, css/)
+├── processed/
+│   └── cache/               # Preprocessed ERA5/DEM and live GFS cache
+├── scripts/                 # Training, evaluation, and backtest tooling
+├── src/
+│   ├── api/                 # Legacy FastAPI app
+│   ├── data/                # Dataset loaders, preprocessing
+│   ├── features/            # Normalization, target construction
+│   ├── inference/           # Live inference, GFS/INSAT pipelines
+│   ├── models/              # SevereWeatherNetV2 architectures
+│   └── training/            # Losses, metrics, calibration
+├── tests/                   # Unit, API, and Playwright browser tests
 ├── .env.example
+├── landing.html
+├── LICENSE
 ├── README.md
 ├── requirements.txt
 ├── run_backend.py
 ├── run_frontend.py
 └── run_server.py
-
+```
 
 ---
 
@@ -145,6 +178,13 @@ Edit .env and fill in:
 
 ```bash
 python run_server.py
+```
+
+This serves both the dashboard and the API from a single process on port 8000. To run them as two separate processes instead (useful for independent frontend/backend development):
+
+```bash
+python run_backend.py     # API on :8000
+python run_frontend.py    # dashboard on :3000, calling the API cross-origin
 ```
 
 ---
