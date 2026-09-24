@@ -13,7 +13,7 @@ from typing import Optional, Tuple, Dict, Any
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, distance_transform_edt
 from PIL import Image
 import matplotlib.path as mpath
 
@@ -120,6 +120,28 @@ def get_or_create_wb_mask(
         mask_flat[in_bb] |= inside
 
     mask = mask_flat.reshape(h, w)
+
+    # Buffer by the same 0.15 deg tolerance NowcastService._load_boundaries uses
+    # to assign a model grid cell to a district (grid spacing is 0.25 deg, so a
+    # cell whose center sits just outside the exact polygon can still be "in"
+    # that district). Without this, a cell counted toward a district's risk
+    # score -- and shown at its true value in that district's card -- could sit
+    # just outside the exact WB polygon and be clipped to fully transparent
+    # here, so the map would show green under a card already reporting Watch
+    # or higher for the same cell.
+    #
+    # A true Euclidean distance buffer, not scipy's binary_dilation: dilation
+    # with the default cross structuring element grows a DIAMOND (city-block
+    # distance), not a circle, and N iterations reaches N*sqrt(2) at a corner --
+    # for N=16 that overshot 0.15 deg to ~0.21 deg at diagonals and visibly
+    # bulged the clip past the real border into Jharkhand. distance_transform_edt
+    # measures true straight-line pixel distance, in degrees once scaled by the
+    # per-axis resolution, so the buffer radius is 0.15 deg in every direction.
+    lat_res_deg = (WB_MAX_LAT - WB_MIN_LAT) / h
+    lon_res_deg = (WB_MAX_LON - WB_MIN_LON) / w
+    dist_deg = distance_transform_edt(~mask, sampling=(lat_res_deg, lon_res_deg))
+    mask = mask | (dist_deg <= 0.15)
+
     try:
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         np.save(cache_path, mask)
@@ -246,9 +268,18 @@ def generate_risk_surface_png(
     mask: Optional[np.ndarray] = None,
     h: int = DEFAULT_H,
     w: int = DEFAULT_W,
-    sigma: float = 3.0,
+    sigma: float = 1.2,
 ) -> bytes:
-    """Interpolate coarse grid to fine resolution, clip to WB boundary, return PNG bytes."""
+    """Interpolate coarse grid to fine resolution, clip to WB boundary, return PNG bytes.
+
+    `sigma` was 3.0, which on this grid (~2.9 visualization cells per 0.25 deg
+    source cell) smooths an isolated hot source cell down by roughly 10x --
+    a real cell at 0.591 (High/Warning) rendered at ~0.25 (barely Watch) or
+    lower, silently painting genuine severe-risk cells green. 1.2 keeps a
+    single-cell peak within ~15% of its source value (measured against the
+    real risk-map endpoint's per-cell output) while still smoothing enough
+    to avoid blocky per-cell edges at the source grid's own resolution.
+    """
     if mask is None:
         mask = get_or_create_wb_mask(h=h, w=w)
 

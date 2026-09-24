@@ -1,6 +1,6 @@
 {
   "status": "ok",
-  "generated_at": "2026-09-21T22:15:13.499044+00:00",
+  "generated_at": "2026-09-24T01:31:03.366987+00:00",
   "methodology": {
     "cycle_selection": "production rule: only cycles published by the simulated NOW, assuming 5.0h production latency",
     "input": "real GFS f000 analyses only; no forecast hour used as an input timestep",
