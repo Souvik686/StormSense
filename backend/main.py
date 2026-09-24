@@ -16,10 +16,11 @@ import sys
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
+import httpx
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, status, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.responses import JSONResponse, FileResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -253,15 +254,22 @@ class PredictRequest(BaseModel):
 
 # ── Frontend Dashboard Endpoints ─────────────────────────────────────────────
 
-@app.get("/", tags=["Frontend"], response_class=FileResponse)
+@app.get("/", tags=["Frontend"], response_class=HTMLResponse)
 async def serve_landing():
     landing_path = os.path.join(os.path.dirname(frontend_dir), "landing.html")
-    if os.path.exists(landing_path):
-        return FileResponse(landing_path, media_type="text/html")
-    raise HTTPException(status_code=404, detail="landing.html not found")
+    if not os.path.exists(landing_path):
+        raise HTTPException(status_code=404, detail="landing.html not found")
+    with open(landing_path, "r", encoding="utf-8") as f_landing:
+        content = f_landing.read()
+    # Same Google Maps key substitution as serve_dashboard(), so the landing
+    # page's own map uses the real Maps SDK (with per-key failover) instead of
+    # a third-party no-key tile provider.
+    keys = _google_maps_keys()
+    content = content.replace(
+        "GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER", json.dumps(keys)
+    )
+    return HTMLResponse(content=content)
 
-
-from fastapi.responses import HTMLResponse
 
 @app.get("/index.html", tags=["Frontend"], response_class=HTMLResponse)
 @app.get("/app", tags=["Frontend"], response_class=HTMLResponse)
@@ -646,6 +654,114 @@ async def historical_analysis_surface(
             "X-Max-Lat": "27.2206",
             "X-Min-Lon": "85.8325",
             "X-Max-Lon": "89.8828",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Live RainViewer radar mosaic, stitched server-side into ONE PNG.
+#
+# RainViewer's public tiles carry no real detail past zoom ~7 (a request for
+# a deeper zoom returns a flat placeholder). The frontend used to draw them as
+# a Leaflet tile LAYER with maxNativeZoom upscaling, which stretches each
+# 256px tile INDEPENDENTLY -- the seams between adjacent stretched tiles then
+# show up as a visible grid cutting through what should be one continuous
+# rain blob. Every OTHER spatial field this app serves (risk-surface,
+# historical analysis-surface) avoids that by being one server-rendered PNG
+# displayed as a single image overlay; this endpoint gives the RainViewer
+# mosaic the same treatment. A client-side canvas-stitch version was tried
+# first and dropped: RainViewer's tile host sends no CORS headers, which
+# taints the canvas and makes toDataURL() throw in the browser. Stitching
+# here instead has no such restriction (server-to-server fetches are not
+# subject to CORS) and needs only one round trip from the browser.
+# ---------------------------------------------------------------------------
+_RADAR_MOSAIC_BOUNDS = {"north": 29.0, "south": 19.0, "west": 83.0, "east": 91.0}
+_RADAR_MOSAIC_ZOOM = 7  # RainViewer's real native resolution; see comment above
+_RADAR_MOSAIC_TILE_PX = 256
+
+
+def _lon_to_tile_x(lon: float, z: int) -> int:
+    return int((lon + 180.0) / 360.0 * (1 << z))
+
+
+def _lat_to_tile_y(lat: float, z: int) -> int:
+    import math
+    rad = math.radians(lat)
+    return int((1.0 - math.log(math.tan(rad) + 1.0 / math.cos(rad)) / math.pi) / 2.0 * (1 << z))
+
+
+@app.get("/api/radar/mosaic", tags=["Alerts"])
+async def radar_mosaic():
+    """Latest RainViewer composite radar frame, stitched into one seamless PNG.
+
+    Covers a fixed region (roughly Nepal/Bihar to Bhutan/Bangladesh, centred
+    on West Bengal) wide enough for the Radar & Satellite Feeds map's pan and
+    zoom range, at RainViewer's real native resolution. The scan time is
+    returned as a header rather than embedded in the image, so the frontend
+    can show "Last Scan ... observed N min ago" without a second request.
+    """
+    import io
+    from PIL import Image
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            meta_resp = await client.get("https://api.rainviewer.com/public/weather-maps.json")
+            meta_resp.raise_for_status()
+            meta = meta_resp.json()
+            frames = (meta.get("radar") or {}).get("past") or []
+            if not frames:
+                raise HTTPException(status_code=503, detail="No RainViewer radar frames available.")
+            latest = frames[-1]
+            host = meta["host"]
+            tile_url_template = f"{host}{latest['path']}/256/{{z}}/{{x}}/{{y}}/2/1_1.png"
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=503, detail=f"RainViewer metadata fetch failed: {e}")
+
+        z = _RADAR_MOSAIC_ZOOM
+        x_min = _lon_to_tile_x(_RADAR_MOSAIC_BOUNDS["west"], z)
+        x_max = _lon_to_tile_x(_RADAR_MOSAIC_BOUNDS["east"], z)
+        y_min = _lat_to_tile_y(_RADAR_MOSAIC_BOUNDS["north"], z)
+        y_max = _lat_to_tile_y(_RADAR_MOSAIC_BOUNDS["south"], z)
+        cols = x_max - x_min + 1
+        rows = y_max - y_min + 1
+
+        async def _fetch_tile(col: int, row: int):
+            tx, ty = x_min + col, y_min + row
+            url = tile_url_template.format(z=z, x=tx, y=ty)
+            try:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    return col, row, r.content
+            except httpx.HTTPError:
+                pass
+            return col, row, None  # missing tile -> left blank, never fails the whole mosaic
+
+        tiles = await asyncio.gather(*[
+            _fetch_tile(col, row) for row in range(rows) for col in range(cols)
+        ])
+
+    mosaic = Image.new("RGBA", (cols * _RADAR_MOSAIC_TILE_PX, rows * _RADAR_MOSAIC_TILE_PX), (0, 0, 0, 0))
+    for col, row, content in tiles:
+        if content is None:
+            continue
+        try:
+            tile_img = Image.open(io.BytesIO(content)).convert("RGBA")
+            mosaic.paste(tile_img, (col * _RADAR_MOSAIC_TILE_PX, row * _RADAR_MOSAIC_TILE_PX))
+        except Exception:
+            continue  # a corrupt/undecodable tile is skipped, not fatal
+
+    buf = io.BytesIO()
+    mosaic.save(buf, format="PNG")
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Scan-Time-Unix": str(latest.get("time", "")),
+            "X-Min-Lat": str(_RADAR_MOSAIC_BOUNDS["south"]),
+            "X-Max-Lat": str(_RADAR_MOSAIC_BOUNDS["north"]),
+            "X-Min-Lon": str(_RADAR_MOSAIC_BOUNDS["west"]),
+            "X-Max-Lon": str(_RADAR_MOSAIC_BOUNDS["east"]),
         },
     )
 
@@ -2231,12 +2347,41 @@ async def force_live_refresh(svc: NowcastService = Depends(_get_service)):
 # POST. Single-process (`python run_server.py`) is the deployment this targets;
 # anything wider needs a shared broker (Redis pub/sub or similar) instead.
 # ---------------------------------------------------------------------------
+
+# ADMIN GATE for the three operator actions below (siren dispatch, advisory
+# post, cell-alert dissemination request). A single shared password rather
+# than per-user accounts: this project has no user table, and the goal here
+# is only to keep the buttons from being anyone-can-click, not to identify
+# which operator acted. Overridable via env var so a real deployment is not
+# stuck with the literal default.
+_ADMIN_PASSWORD = os.getenv("STORMSENSE_ADMIN_PASSWORD", "123")
+
+
+def _require_admin(body: dict) -> None:
+    """Raise 403 unless the request body carries the correct admin password.
+
+    Checked server-side (not just hidden client-side) so the gate is real:
+    a caller hitting the API directly still needs the password.
+    """
+    if str(body.get("admin_password", "")) != _ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Incorrect admin password.",
+        )
+
+
 _siren_subscribers: "set[asyncio.Queue]" = set()
 
 
 @app.get("/api/siren/stream", tags=["Alerts"])
 async def siren_stream():
-    """Long-lived SSE stream a viewer subscribes to to receive siren broadcasts."""
+    """Long-lived SSE stream a viewer subscribes to for live siren AND advisory broadcasts.
+
+    One stream, two event names: a payload tagged "__event__": "advisory" is
+    sent as an `advisory` SSE event, everything else (the siren dispatch
+    payload never carries that tag) as `siren`, so both features share the
+    same connection instead of every viewer opening two.
+    """
     from fastapi.responses import StreamingResponse
 
     queue: asyncio.Queue = asyncio.Queue()
@@ -2253,7 +2398,8 @@ async def siren_stream():
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
                     continue
-                yield f"event: siren\ndata: {json.dumps(payload)}\n\n"
+                event_name = payload.pop("__event__", "siren") if isinstance(payload, dict) else "siren"
+                yield f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
         finally:
             _siren_subscribers.discard(queue)
 
@@ -2287,6 +2433,7 @@ async def siren_dispatch(request: Request):
         body = {}
     if not isinstance(body, dict):
         body = {}
+    _require_admin(body)
 
     def _clean(key: str, limit: int = 500) -> Optional[str]:
         # The message is rendered into other viewers' DOM, so bound its length
@@ -2434,11 +2581,32 @@ async def siren_dispatch(request: Request):
 # ---------------------------------------------------------------------------
 _advisories: list = []
 _ADVISORY_MAX = 200  # bounded so a long-running process cannot grow this unboundedly
+_ADVISORY_TTL_HOURS = 4.0  # advisories age out of the log after this long
+
+
+def _prune_expired_advisories() -> None:
+    """Drop advisories older than _ADVISORY_TTL_HOURS from the in-memory log.
+
+    Called on every read/write of the log rather than on a background timer,
+    so there is no scheduler to keep running and nothing to clean up if the
+    process is short-lived (e.g. tests importing this module).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_ADVISORY_TTL_HOURS)
+    kept = []
+    for a in _advisories:
+        try:
+            issued = datetime.fromisoformat(a["issued_at_utc"])
+        except (KeyError, TypeError, ValueError):
+            continue  # malformed entry; drop rather than keep forever
+        if issued >= cutoff:
+            kept.append(a)
+    _advisories[:] = kept
 
 
 @app.get("/api/advisories", tags=["Alerts"])
 async def list_advisories(limit: int = Query(50, ge=1, le=_ADVISORY_MAX)):
-    """Most recent advisories first."""
+    """Most recent advisories first, excluding any older than the 4h TTL."""
+    _prune_expired_advisories()
     return {"advisories": list(reversed(_advisories[-limit:]))}
 
 
@@ -2448,7 +2616,9 @@ async def post_advisory(request: Request):
 
     Distinguished from /api/siren/dispatch by being a persistent, readable
     record rather than a live interrupt -- the right tool for "conditions are
-    being monitored" rather than "act now".
+    being monitored" rather than "act now". Also pushed over the same SSE
+    stream as the siren (as an "advisory" event, not a "siren" one) so every
+    connected viewer's feed updates live instead of only on next page load.
     """
     try:
         body = await request.json()
@@ -2456,21 +2626,32 @@ async def post_advisory(request: Request):
         body = {}
     if not isinstance(body, dict):
         body = {}
+    _require_admin(body)
 
     def _clean(key: str, limit: int = 500) -> Optional[str]:
         val = body.get(key)
         return str(val)[:limit] if val is not None else None
 
+    issued_at = datetime.now(timezone.utc)
     entry = {
         "id": len(_advisories) + 1,
         "district": _clean("district", 120),
         "level": _clean("level", 32),
         "message": _clean("message", 2000),
-        "issued_at_utc": datetime.now(timezone.utc).isoformat(),
+        "issued_at_utc": issued_at.isoformat(),
+        # So the frontend can show a countdown and drop it from an
+        # already-open feed at the right moment, without polling to find out.
+        "expires_at_utc": (issued_at + timedelta(hours=_ADVISORY_TTL_HOURS)).isoformat(),
         "scope": "in_app_bulletin_only",
     }
     _advisories.append(entry)
     del _advisories[:-_ADVISORY_MAX]  # keep only the most recent _ADVISORY_MAX
+    _prune_expired_advisories()
+    for queue in list(_siren_subscribers):
+        try:
+            queue.put_nowait({"__event__": "advisory", **entry})
+        except asyncio.QueueFull:
+            pass
     return {"posted": True, "advisory": entry, "total_advisories": len(_advisories)}
 
 
@@ -2511,6 +2692,7 @@ async def log_operational_action(request: Request):
         body = {}
     if not isinstance(body, dict):
         body = {}
+    _require_admin(body)
 
     def _clean(key: str, limit: int = 500) -> Optional[str]:
         val = body.get(key)
