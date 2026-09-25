@@ -1,0 +1,696 @@
+{
+  "status": "ok",
+  "generated_at": "2026-09-21T18:53:05.845890+00:00",
+  "methodology": {
+    "cycle_selection": "production rule: only cycles published by the simulated NOW, assuming 5.0h production latency",
+    "input": "real GFS f000 analyses only; no forecast hour used as an input timestep",
+    "inference_path": "NowcastService.refresh_live_state (the production path)",
+    "scored_variable": "severe_weather_prob (calibrated severe-weather probability)",
+    "truth": "ERA5-derived severe_weather proxy target at the valid time",
+    "threshold": "per-lead calibrated threshold from the checkpoint"
+  },
+  "caveats": [
+    "Truth labels are ERA5-derived PROXIES, not observed severe-weather reports.",
+    "Inputs are GFS while truth is ERA5, so measured error includes GFS-vs-ERA5 representation differences as well as model error.",
+    "Sample size is limited by GFS archive retention; N is reported per horizon and confidence intervals are correspondingly wide.",
+    "This is NOT a claim of operational accuracy against observed severe weather."
+  ],
+  "cases_attempted": 16,
+  "cases_completed": 16,
+  "per_horizon": {
+    "8": {
+      "samples": 13200,
+      "event_prevalence": 0.049166666666666664,
+      "threshold_used": 0.5409090909090909,
+      "tp": 117,
+      "fp": 740,
+      "fn": 532,
+      "tn": 11811,
+      "csi": 0.08423326133909287,
+      "pod": 0.1802773497688752,
+      "far": 0.8634772462077013,
+      "brier_score": 0.07827248424291611,
+      "ece": 0.08470793019563919,
+      "pr_auc": 0.11070188186061969,
+      "pr_auc_baseline_no_skill": 0.049166666666666664
+    },
+    "10": {
+      "samples": 13200,
+      "event_prevalence": 0.05136363636363636,
+      "threshold_used": 0.46818181818181814,
+      "tp": 149,
+      "fp": 844,
+      "fn": 529,
+      "tn": 11678,
+      "csi": 0.09789750328515112,
+      "pod": 0.21976401179941002,
+      "far": 0.8499496475327291,
+      "brier_score": 0.07511188834905624,
+      "ece": 0.07728279528892458,
+      "pr_auc": 0.13460076046989325,
+      "pr_auc_baseline_no_skill": 0.05136363636363636
+    },
+    "12": {
+      "samples": 13200,
+      "event_prevalence": 0.04924242424242424,
+      "threshold_used": 0.47727272727272724,
+      "tp": 206,
+      "fp": 765,
+      "fn": 444,
+      "tn": 11785,
+      "csi": 0.14558303886925794,
+      "pod": 0.3169230769230769,
+      "far": 0.787847579814624,
+      "brier_score": 0.06557967513799667,
+      "ece": 0.06632176576019971,
+      "pr_auc": 0.1763414775905479,
+      "pr_auc_baseline_no_skill": 0.04924242424242424
+    },
+    "14": {
+      "samples": 13200,
+      "event_prevalence": 0.042954545454545454,
+      "threshold_used": 0.47727272727272724,
+      "tp": 139,
+      "fp": 844,
+      "fn": 428,
+      "tn": 11789,
+      "csi": 0.09851169383416017,
+      "pod": 0.24514991181657847,
+      "far": 0.8585961342828077,
+      "brier_score": 0.06736433506011963,
+      "ece": 0.07099232323474787,
+      "pr_auc": 0.10900807576807062,
+      "pr_auc_baseline_no_skill": 0.042954545454545454
+    },
+    "16": {
+      "samples": 13200,
+      "event_prevalence": 0.04015151515151515,
+      "threshold_used": 0.48636363636363633,
+      "tp": 154,
+      "fp": 722,
+      "fn": 376,
+      "tn": 11948,
+      "csi": 0.12300319488817892,
+      "pod": 0.29056603773584905,
+      "far": 0.8242009132420092,
+      "brier_score": 0.06142699345946312,
+      "ece": 0.06928780548168684,
+      "pr_auc": 0.12862987659229777,
+      "pr_auc_baseline_no_skill": 0.04015151515151515
+    }
+  },
+  "cases": [
+    {
+      "simulated_now": "2023-05-01T00:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-04-30T18:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-01T08:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0012121212121212121,
+          "mean_predicted_prob": 0.005073123145848513
+        },
+        "10": {
+          "valid_time": "2023-05-01T10:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.013121606782078743
+        },
+        "12": {
+          "valid_time": "2023-05-01T12:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.031085019931197166
+        },
+        "14": {
+          "valid_time": "2023-05-01T14:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.050039567053318024
+        },
+        "16": {
+          "valid_time": "2023-05-01T16:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.0307017732411623
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-04T19:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-04T12:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-05T03:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.00017207124619744718
+        },
+        "10": {
+          "valid_time": "2023-05-05T05:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.009696969696969697,
+          "mean_predicted_prob": 0.00033097085542976856
+        },
+        "12": {
+          "valid_time": "2023-05-05T07:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.012121212121212121,
+          "mean_predicted_prob": 0.0006995804142206907
+        },
+        "14": {
+          "valid_time": "2023-05-05T09:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0012121212121212121,
+          "mean_predicted_prob": 0.0015330921160057187
+        },
+        "16": {
+          "valid_time": "2023-05-05T11:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0012121212121212121,
+          "mean_predicted_prob": 0.0023585453163832426
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-08T14:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-08T06:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-08T22:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.16242424242424242,
+          "mean_predicted_prob": 0.0011416260385885835
+        },
+        "10": {
+          "valid_time": "2023-05-09T00:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.11393939393939394,
+          "mean_predicted_prob": 0.0042616878636181355
+        },
+        "12": {
+          "valid_time": "2023-05-09T02:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.1296969696969697,
+          "mean_predicted_prob": 0.01374710164964199
+        },
+        "14": {
+          "valid_time": "2023-05-09T04:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.09575757575757576,
+          "mean_predicted_prob": 0.03796634450554848
+        },
+        "16": {
+          "valid_time": "2023-05-09T06:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.020606060606060607,
+          "mean_predicted_prob": 0.07588990032672882
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-12T09:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-12T00:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-12T17:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.0034459508024156094
+        },
+        "10": {
+          "valid_time": "2023-05-12T19:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.0026439549401402473
+        },
+        "12": {
+          "valid_time": "2023-05-12T21:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.004933657590299845
+        },
+        "14": {
+          "valid_time": "2023-05-12T23:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0048484848484848485,
+          "mean_predicted_prob": 0.011133336462080479
+        },
+        "16": {
+          "valid_time": "2023-05-13T01:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.012121212121212121,
+          "mean_predicted_prob": 0.016894351691007614
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-16T04:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-15T18:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-16T12:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.04,
+          "mean_predicted_prob": 0.36156871914863586
+        },
+        "10": {
+          "valid_time": "2023-05-16T14:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.02909090909090909,
+          "mean_predicted_prob": 0.3294782042503357
+        },
+        "12": {
+          "valid_time": "2023-05-16T16:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.05818181818181818,
+          "mean_predicted_prob": 0.26629698276519775
+        },
+        "14": {
+          "valid_time": "2023-05-16T18:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0993939393939394,
+          "mean_predicted_prob": 0.19944511353969574
+        },
+        "16": {
+          "valid_time": "2023-05-16T20:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.09575757575757576,
+          "mean_predicted_prob": 0.13875944912433624
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-19T23:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-19T18:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-20T07:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0012121212121212121,
+          "mean_predicted_prob": 0.18139877915382385
+        },
+        "10": {
+          "valid_time": "2023-05-20T09:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.009696969696969697,
+          "mean_predicted_prob": 0.17436794936656952
+        },
+        "12": {
+          "valid_time": "2023-05-20T11:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.012121212121212121,
+          "mean_predicted_prob": 0.16364718973636627
+        },
+        "14": {
+          "valid_time": "2023-05-20T13:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.037575757575757575,
+          "mean_predicted_prob": 0.16050074994564056
+        },
+        "16": {
+          "valid_time": "2023-05-20T15:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.07272727272727272,
+          "mean_predicted_prob": 0.13328559696674347
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-23T18:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-23T12:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-24T02:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.13696969696969696,
+          "mean_predicted_prob": 0.09764109551906586
+        },
+        "10": {
+          "valid_time": "2023-05-24T04:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.17575757575757575,
+          "mean_predicted_prob": 0.11975127458572388
+        },
+        "12": {
+          "valid_time": "2023-05-24T06:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.11393939393939394,
+          "mean_predicted_prob": 0.14454954862594604
+        },
+        "14": {
+          "valid_time": "2023-05-24T08:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01696969696969697,
+          "mean_predicted_prob": 0.1701582819223404
+        },
+        "16": {
+          "valid_time": "2023-05-24T10:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.014545454545454545,
+          "mean_predicted_prob": 0.18410451710224152
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-27T13:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-27T06:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-27T21:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01818181818181818,
+          "mean_predicted_prob": 0.020748669281601906
+        },
+        "10": {
+          "valid_time": "2023-05-27T23:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.008484848484848486,
+          "mean_predicted_prob": 0.03271117061376572
+        },
+        "12": {
+          "valid_time": "2023-05-28T01:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.013333333333333334,
+          "mean_predicted_prob": 0.047862980514764786
+        },
+        "14": {
+          "valid_time": "2023-05-28T03:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.06808804720640182
+        },
+        "16": {
+          "valid_time": "2023-05-28T05:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0024242424242424242,
+          "mean_predicted_prob": 0.08821822702884674
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-05-31T08:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-05-31T00:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-05-31T16:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0036363636363636364,
+          "mean_predicted_prob": 0.008563620038330555
+        },
+        "10": {
+          "valid_time": "2023-05-31T18:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01090909090909091,
+          "mean_predicted_prob": 0.007045308127999306
+        },
+        "12": {
+          "valid_time": "2023-05-31T20:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.030303030303030304,
+          "mean_predicted_prob": 0.01037586946040392
+        },
+        "14": {
+          "valid_time": "2023-05-31T22:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.08727272727272728,
+          "mean_predicted_prob": 0.01639893837273121
+        },
+        "16": {
+          "valid_time": "2023-06-01T00:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.08242424242424243,
+          "mean_predicted_prob": 0.024345126003026962
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-04T03:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-03T18:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-04T11:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0,
+          "mean_predicted_prob": 0.08359964191913605
+        },
+        "10": {
+          "valid_time": "2023-06-04T13:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.008484848484848486,
+          "mean_predicted_prob": 0.08490817248821259
+        },
+        "12": {
+          "valid_time": "2023-06-04T15:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01090909090909091,
+          "mean_predicted_prob": 0.07707908749580383
+        },
+        "14": {
+          "valid_time": "2023-06-04T17:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0024242424242424242,
+          "mean_predicted_prob": 0.06401565670967102
+        },
+        "16": {
+          "valid_time": "2023-06-04T19:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01575757575757576,
+          "mean_predicted_prob": 0.04598143324255943
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-07T22:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-07T12:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-08T06:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.02666666666666667,
+          "mean_predicted_prob": 0.10208401083946228
+        },
+        "10": {
+          "valid_time": "2023-06-08T08:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.007272727272727273,
+          "mean_predicted_prob": 0.13035567104816437
+        },
+        "12": {
+          "valid_time": "2023-06-08T10:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.02181818181818182,
+          "mean_predicted_prob": 0.15659849345684052
+        },
+        "14": {
+          "valid_time": "2023-06-08T12:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.05818181818181818,
+          "mean_predicted_prob": 0.1875314861536026
+        },
+        "16": {
+          "valid_time": "2023-06-08T14:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.06666666666666667,
+          "mean_predicted_prob": 0.20823712646961212
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-11T17:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-11T12:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-12T01:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.12363636363636364,
+          "mean_predicted_prob": 0.15338285267353058
+        },
+        "10": {
+          "valid_time": "2023-06-12T03:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.15272727272727274,
+          "mean_predicted_prob": 0.17277483642101288
+        },
+        "12": {
+          "valid_time": "2023-06-12T05:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.12363636363636364,
+          "mean_predicted_prob": 0.19149769842624664
+        },
+        "14": {
+          "valid_time": "2023-06-12T07:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.020606060606060607,
+          "mean_predicted_prob": 0.21303457021713257
+        },
+        "16": {
+          "valid_time": "2023-06-12T09:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.02181818181818182,
+          "mean_predicted_prob": 0.22703798115253448
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-15T12:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-15T06:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-15T20:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.18181818181818182,
+          "mean_predicted_prob": 0.052985403686761856
+        },
+        "10": {
+          "valid_time": "2023-06-15T22:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.20727272727272728,
+          "mean_predicted_prob": 0.07863917201757431
+        },
+        "12": {
+          "valid_time": "2023-06-16T00:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.18424242424242424,
+          "mean_predicted_prob": 0.11804554611444473
+        },
+        "14": {
+          "valid_time": "2023-06-16T02:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.1890909090909091,
+          "mean_predicted_prob": 0.16148991882801056
+        },
+        "16": {
+          "valid_time": "2023-06-16T04:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.15393939393939393,
+          "mean_predicted_prob": 0.19063133001327515
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-19T07:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-19T00:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-19T15:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.024242424242424242,
+          "mean_predicted_prob": 0.2468569427728653
+        },
+        "10": {
+          "valid_time": "2023-06-19T17:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.02181818181818182,
+          "mean_predicted_prob": 0.19698920845985413
+        },
+        "12": {
+          "valid_time": "2023-06-19T19:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.04606060606060606,
+          "mean_predicted_prob": 0.1626494973897934
+        },
+        "14": {
+          "valid_time": "2023-06-19T21:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.055757575757575756,
+          "mean_predicted_prob": 0.14429552853107452
+        },
+        "16": {
+          "valid_time": "2023-06-19T23:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.06666666666666667,
+          "mean_predicted_prob": 0.13592611253261566
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-23T02:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-22T18:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-23T10:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.04363636363636364,
+          "mean_predicted_prob": 0.02419949881732464
+        },
+        "10": {
+          "valid_time": "2023-06-23T12:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.03393939393939394,
+          "mean_predicted_prob": 0.031100459396839142
+        },
+        "12": {
+          "valid_time": "2023-06-23T14:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01818181818181818,
+          "mean_predicted_prob": 0.074225053191185
+        },
+        "14": {
+          "valid_time": "2023-06-23T16:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.007272727272727273,
+          "mean_predicted_prob": 0.09235639870166779
+        },
+        "16": {
+          "valid_time": "2023-06-23T18:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01090909090909091,
+          "mean_predicted_prob": 0.05067130923271179
+        }
+      }
+    },
+    {
+      "simulated_now": "2023-06-26T21:00:00+00:00",
+      "status": "ok",
+      "analysis_time": "2023-06-26T12:00:00+00:00",
+      "horizons": {
+        "8": {
+          "valid_time": "2023-06-27T05:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.02303030303030303,
+          "mean_predicted_prob": 0.05004236847162247
+        },
+        "10": {
+          "valid_time": "2023-06-27T07:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.03272727272727273,
+          "mean_predicted_prob": 0.04654216021299362
+        },
+        "12": {
+          "valid_time": "2023-06-27T09:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.013333333333333334,
+          "mean_predicted_prob": 0.04583254083991051
+        },
+        "14": {
+          "valid_time": "2023-06-27T11:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.01090909090909091,
+          "mean_predicted_prob": 0.04918043315410614
+        },
+        "16": {
+          "valid_time": "2023-06-27T13:00:00+00:00",
+          "cells": 825,
+          "observed_event_rate": 0.0048484848484848485,
+          "mean_predicted_prob": 0.05343727022409439
+        }
+      }
+    }
+  ]
+}

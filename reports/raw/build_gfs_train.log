@@ -1,0 +1,17 @@
+[build] 735 candidate cycles in 2021-05-01..2022-10-31 months=[5, 6, 7, 8, 9, 10] stride=2
+  [25/735] kept=25 failed=0
+  [50/735] kept=50 failed=0
+  [75/735] kept=75 failed=0
+  [100/735] kept=100 failed=0
+  [125/735] kept=125 failed=0
+  [150/735] kept=150 failed=0
+  [175/735] kept=175 failed=0
+  [200/735] kept=200 failed=0
+  [225/735] kept=225 failed=0
+  [252/735] kept=250 failed=0
+  [skip] 2021-09-10 00Z: GfsFetchError: Could not fetch GFS cycle 2021-09-10T00:00:00+00:00 from AWS or NOMADS: Cycle 20
+  [278/735] kept=275 failed=1
+  [303/735] kept=300 failed=1
+  [328/735] kept=325 failed=1
+  [skip] 2021-10-24 00Z: GfsFetchError: Could not fetch GFS cycle 2021-10-24T00:00:00+00:00 from AWS or NOMADS: Cycle 20
+  [354/735] kept=350 failed=2

@@ -1,0 +1,40 @@
+Beginning post-reorganization verification for 34 endpoints...
+[01/34] PASS [HTTP 200]: /api/health
+[02/34] PASS [HTTP 200]: /api/system/info
+[03/34] FAIL [HTTP 500 != error]: /api/model-info
+[04/34] PASS [HTTP 200]: /api/time/reference?mode=live
+[05/34] PASS [HTTP 200]: /api/time/reference?mode=historical
+[06/34] PASS [HTTP 200]: /api/mode/status
+[07/34] PASS [HTTP 200]: /api/benchmark/models
+[08/34] PASS [HTTP 200]: /api/boundaries/state
+[09/34] PASS [HTTP 200]: /api/boundaries/west-bengal
+[10/34] PASS [HTTP 200]: /api/data-health
+[11/34] PASS [HTTP 200]: /api/satellite/info
+[12/34] PASS [HTTP 200]: /api/geo/areas
+[13/34] PASS [HTTP 200]: /api/nowcast/summary?lead=2&mode=live
+[14/34] PASS [HTTP 200]: /api/nowcast/summary?lead=4&mode=live
+[15/34] PASS [HTTP 200]: /api/nowcast/summary?lead=6&mode=live
+[16/34] PASS [HTTP 200]: /api/nowcast/districts?lead=2&mode=live
+[17/34] PASS [HTTP 200]: /api/nowcast/high-risk-cells?lead=2&mode=live
+[18/34] PASS [HTTP 200]: /api/nowcast/thermodynamics?mode=live
+[19/34] PASS [HTTP 200]: /api/nowcast/xai?mode=live
+[20/34] PASS [HTTP 200]: /api/nowcast/point?lat=22.5&lon=88.3&lead=2&mode=live
+[21/34] PASS [HTTP 200]: /api/nowcast/point?lat=22.5&lon=88.3&lead=4&mode=live
+[22/34] PASS [HTTP 200]: /api/nowcast/point?lat=22.5&lon=88.3&lead=6&mode=live
+[23/34] PASS [HTTP 200]: /api/nowcast/summary?lead=2&mode=historical
+[24/34] PASS [HTTP 200]: /api/nowcast/summary?lead=4&mode=historical
+[25/34] PASS [HTTP 200]: /api/nowcast/summary?lead=6&mode=historical
+[26/34] PASS [HTTP 200]: /api/nowcast/districts?lead=2&mode=historical
+[27/34] PASS [HTTP 200]: /api/nowcast/high-risk-cells?lead=2&mode=historical
+[28/34] PASS [HTTP 200]: /api/nowcast/thermodynamics?mode=historical
+[29/34] PASS [HTTP 200]: /api/nowcast/xai?mode=historical
+[30/34] PASS [HTTP 200]: /api/nowcast/point?lat=22.5&lon=88.3&lead=2&mode=historical
+[31/34] PASS [HTTP 200]: /api/nowcast/point?lat=22.5&lon=88.3&lead=4&mode=historical
+[32/34] PASS [HTTP 200]: /api/nowcast/point?lat=22.5&lon=88.3&lead=6&mode=historical
+[33/34] PASS [HTTP 200]: /api/historical/case-study
+[34/34] PASS [HTTP 200]: /api/historical/analysis-state
+================================================================================
+VERIFICATION COMPLETE: 33/34 PASSED (97.1%)
+TOTAL MATCHING BASELINE: 33
+TOTAL DIFFERENCES: 1
+================================================================================

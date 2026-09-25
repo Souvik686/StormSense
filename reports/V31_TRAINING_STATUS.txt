@@ -1,0 +1,13 @@
+v3.1 LONG-LEAD TRAINING -- STOPPED EARLY (no completion line in log)
+updated: 2026-09-21 19:15:34
+epochs completed: 4
+
+reason: the training process exited after 4 epoch(s) without logging early stopping or completion. It was most likely killed or crashed -- check train_v31.err. Training can be resumed with --resume-from Data/outputs/checkpoints_v31/v2_last.pt
+
+last log lines:
+  [epoch 1/60] train_loss=0.0157 val_loss=0.0166 val_pr_auc=0.1393 val_csi=0.0973 sev_loss=0.0108 rain_loss=0.1147 lr=2.00e-04 time=714.1s
+  [epoch 2/60] train_loss=0.0135 val_loss=0.0161 val_pr_auc=0.1600 val_csi=0.1285 sev_loss=0.0106 rain_loss=0.1099 lr=3.00e-04 time=728.7s
+  [epoch 3/60] train_loss=0.0128 val_loss=0.0152 val_pr_auc=0.1828 val_csi=0.1459 sev_loss=0.0099 rain_loss=0.1052 lr=3.00e-04 time=716.1s
+  [epoch 4/60] train_loss=0.0122 val_loss=0.0159 val_pr_auc=0.1802 val_csi=0.1429 sev_loss=0.0107 rain_loss=0.1033 lr=3.00e-04 time=707.6s
+
+log: C:\Users\Souvik\AppData\Local\Temp\claude\d--Weather-Hackathon\df1d99b5-6837-418b-8d87-96d2601ad90e\scratchpad\train_v31.log

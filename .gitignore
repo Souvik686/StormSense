@@ -88,12 +88,15 @@ Data/outputs/checkpoints_v*/
 dump.py
 
 # --- Internal dev notes, not needed to run the app ------------------
-# Real project history (acceptance reports, session handoffs, experiment
-# dumps), but referenced only in comments/error-message strings pointing a
-# human reader at them -- never opened or read by any runtime code path.
-# Kept on disk, not in the public repo.
+# Session handoffs: real project history, but referenced only in
+# comments/error-message strings pointing a human reader at them --
+# never opened by any runtime code path, and never linked from any
+# public page. Kept on disk, not in the public repo.
+# reports/ is NOT listed here: landing.html links to
+# reports/STARTUP_AND_VERIFICATION.md as the public "Reproduce the
+# Benchmarks" button, so it must stay tracked -- it was mistakenly
+# untracked earlier and 404'd on that link until this was reverted.
 docs/handoffs/
-reports/
 
 # --- Orphaned doc: described three .docx files that live under ------
 # docs/manual/, not here; this folder itself never held them.
