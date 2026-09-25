@@ -1,0 +1,224 @@
+[truth] ERA5 target cache: 17472 timestamps, 2021-05-01T00:00:00+00:00 .. 2024-10-30T23:00:00+00:00
+[NowcastService] Precomputed historical continuous West Bengal risk surfaces for leads: [0, 2, 3, 4, 5, 6]
+[NowcastService] Historical (Cyclone Remal) operational state loaded. Valid time: 2024-05-26T12:00:00Z
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2026-09-21T18:59:08.205561+00:00, GFS analysis=2026-09-21T12:00:00+00:00, analysis lag=7.0h
+[plan] 16 simulated NOW instants to attempt (2023-06-26T21:00:00+00:00 .. 2023-05-01T00:00:00+00:00)
+
+[case] simulated NOW = 2023-05-01T00:00:00+00:00  (newest genuinely-available cycle: 2023-04-30T18:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-01T00:00:00+00:00, GFS analysis=2023-04-30T18:00:00+00:00, analysis lag=6.0h
+   -> analysis used: 2023-04-30T18:00:00+00:00 (lag 6.0h)
+   -> +2h valid 2023-05-01T02:00:00+00:00  truth rate=0.0000  mean p=0.0169
+   -> +3h valid 2023-05-01T03:00:00+00:00  truth rate=0.0000  mean p=0.0138
+   -> +4h valid 2023-05-01T04:00:00+00:00  truth rate=0.0000  mean p=0.0128
+   -> +5h valid 2023-05-01T05:00:00+00:00  truth rate=0.0024  mean p=0.0121
+   -> +6h valid 2023-05-01T06:00:00+00:00  truth rate=0.0000  mean p=0.0113
+
+[case] simulated NOW = 2023-05-04T19:00:00+00:00  (newest genuinely-available cycle: 2023-05-04T12:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-04T19:00:00+00:00, GFS analysis=2023-05-04T12:00:00+00:00, analysis lag=7.0h
+   -> analysis used: 2023-05-04T12:00:00+00:00 (lag 7.0h)
+   -> +2h valid 2023-05-04T21:00:00+00:00  truth rate=0.0000  mean p=0.0001
+   -> +3h valid 2023-05-04T22:00:00+00:00  truth rate=0.0000  mean p=0.0001
+   -> +4h valid 2023-05-04T23:00:00+00:00  truth rate=0.0000  mean p=0.0001
+   -> +5h valid 2023-05-05T00:00:00+00:00  truth rate=0.0000  mean p=0.0001
+   -> +6h valid 2023-05-05T01:00:00+00:00  truth rate=0.0000  mean p=0.0001
+
+[case] simulated NOW = 2023-05-08T14:00:00+00:00  (newest genuinely-available cycle: 2023-05-08T06:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-08T14:00:00+00:00, GFS analysis=2023-05-08T06:00:00+00:00, analysis lag=8.0h
+   -> analysis used: 2023-05-08T06:00:00+00:00 (lag 8.0h)
+   -> +2h valid 2023-05-08T16:00:00+00:00  truth rate=0.0315  mean p=0.0146
+   -> +3h valid 2023-05-08T17:00:00+00:00  truth rate=0.0291  mean p=0.0108
+   -> +4h valid 2023-05-08T18:00:00+00:00  truth rate=0.0255  mean p=0.0129
+   -> +5h valid 2023-05-08T19:00:00+00:00  truth rate=0.1394  mean p=0.0162
+   -> +6h valid 2023-05-08T20:00:00+00:00  truth rate=0.1188  mean p=0.0187
+
+[case] simulated NOW = 2023-05-12T09:00:00+00:00  (newest genuinely-available cycle: 2023-05-12T00:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-12T09:00:00+00:00, GFS analysis=2023-05-12T00:00:00+00:00, analysis lag=9.0h
+   -> analysis used: 2023-05-12T00:00:00+00:00 (lag 9.0h)
+   -> +2h valid 2023-05-12T11:00:00+00:00  truth rate=0.0000  mean p=0.0997
+   -> +3h valid 2023-05-12T12:00:00+00:00  truth rate=0.0000  mean p=0.0791
+   -> +4h valid 2023-05-12T13:00:00+00:00  truth rate=0.0000  mean p=0.0680
+   -> +5h valid 2023-05-12T14:00:00+00:00  truth rate=0.0000  mean p=0.0605
+   -> +6h valid 2023-05-12T15:00:00+00:00  truth rate=0.0000  mean p=0.0514
+
+[case] simulated NOW = 2023-05-16T04:00:00+00:00  (newest genuinely-available cycle: 2023-05-15T18:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-16T04:00:00+00:00, GFS analysis=2023-05-15T18:00:00+00:00, analysis lag=10.0h
+   -> analysis used: 2023-05-15T18:00:00+00:00 (lag 10.0h)
+   -> +2h valid 2023-05-16T06:00:00+00:00  truth rate=0.0461  mean p=0.1666
+   -> +3h valid 2023-05-16T07:00:00+00:00  truth rate=0.0097  mean p=0.1641
+   -> +4h valid 2023-05-16T08:00:00+00:00  truth rate=0.0061  mean p=0.1668
+   -> +5h valid 2023-05-16T09:00:00+00:00  truth rate=0.0109  mean p=0.1734
+   -> +6h valid 2023-05-16T10:00:00+00:00  truth rate=0.0267  mean p=0.1773
+
+[case] simulated NOW = 2023-05-19T23:00:00+00:00  (newest genuinely-available cycle: 2023-05-19T18:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-19T23:00:00+00:00, GFS analysis=2023-05-19T18:00:00+00:00, analysis lag=5.0h
+   -> analysis used: 2023-05-19T18:00:00+00:00 (lag 5.0h)
+   -> +2h valid 2023-05-20T01:00:00+00:00  truth rate=0.0558  mean p=0.1315
+   -> +3h valid 2023-05-20T02:00:00+00:00  truth rate=0.0558  mean p=0.1102
+   -> +4h valid 2023-05-20T03:00:00+00:00  truth rate=0.0558  mean p=0.0980
+   -> +5h valid 2023-05-20T04:00:00+00:00  truth rate=0.0388  mean p=0.0876
+   -> +6h valid 2023-05-20T05:00:00+00:00  truth rate=0.0315  mean p=0.0797
+
+[case] simulated NOW = 2023-05-23T18:00:00+00:00  (newest genuinely-available cycle: 2023-05-23T12:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-23T18:00:00+00:00, GFS analysis=2023-05-23T12:00:00+00:00, analysis lag=6.0h
+   -> analysis used: 2023-05-23T12:00:00+00:00 (lag 6.0h)
+   -> +2h valid 2023-05-23T20:00:00+00:00  truth rate=0.0921  mean p=0.1194
+   -> +3h valid 2023-05-23T21:00:00+00:00  truth rate=0.0897  mean p=0.1072
+   -> +4h valid 2023-05-23T22:00:00+00:00  truth rate=0.0630  mean p=0.0980
+   -> +5h valid 2023-05-23T23:00:00+00:00  truth rate=0.0752  mean p=0.0981
+   -> +6h valid 2023-05-24T00:00:00+00:00  truth rate=0.0945  mean p=0.1016
+
+[case] simulated NOW = 2023-05-27T13:00:00+00:00  (newest genuinely-available cycle: 2023-05-27T06:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-27T13:00:00+00:00, GFS analysis=2023-05-27T06:00:00+00:00, analysis lag=7.0h
+   -> analysis used: 2023-05-27T06:00:00+00:00 (lag 7.0h)
+   -> +2h valid 2023-05-27T15:00:00+00:00  truth rate=0.0182  mean p=0.0989
+   -> +3h valid 2023-05-27T16:00:00+00:00  truth rate=0.0194  mean p=0.0704
+   -> +4h valid 2023-05-27T17:00:00+00:00  truth rate=0.0242  mean p=0.0645
+   -> +5h valid 2023-05-27T18:00:00+00:00  truth rate=0.0303  mean p=0.0664
+   -> +6h valid 2023-05-27T19:00:00+00:00  truth rate=0.0121  mean p=0.0662
+
+[case] simulated NOW = 2023-05-31T08:00:00+00:00  (newest genuinely-available cycle: 2023-05-31T00:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-05-31T08:00:00+00:00, GFS analysis=2023-05-31T00:00:00+00:00, analysis lag=8.0h
+   -> analysis used: 2023-05-31T00:00:00+00:00 (lag 8.0h)
+   -> +2h valid 2023-05-31T10:00:00+00:00  truth rate=0.0024  mean p=0.0953
+   -> +3h valid 2023-05-31T11:00:00+00:00  truth rate=0.0000  mean p=0.0644
+   -> +4h valid 2023-05-31T12:00:00+00:00  truth rate=0.0000  mean p=0.0436
+   -> +5h valid 2023-05-31T13:00:00+00:00  truth rate=0.0061  mean p=0.0264
+   -> +6h valid 2023-05-31T14:00:00+00:00  truth rate=0.0036  mean p=0.0143
+
+[case] simulated NOW = 2023-06-04T03:00:00+00:00  (newest genuinely-available cycle: 2023-06-03T18:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-04T03:00:00+00:00, GFS analysis=2023-06-03T18:00:00+00:00, analysis lag=9.0h
+   -> analysis used: 2023-06-03T18:00:00+00:00 (lag 9.0h)
+   -> +2h valid 2023-06-04T05:00:00+00:00  truth rate=0.0048  mean p=0.0751
+   -> +3h valid 2023-06-04T06:00:00+00:00  truth rate=0.0036  mean p=0.0449
+   -> +4h valid 2023-06-04T07:00:00+00:00  truth rate=0.0000  mean p=0.0314
+   -> +5h valid 2023-06-04T08:00:00+00:00  truth rate=0.0000  mean p=0.0250
+   -> +6h valid 2023-06-04T09:00:00+00:00  truth rate=0.0000  mean p=0.0197
+
+[case] simulated NOW = 2023-06-07T22:00:00+00:00  (newest genuinely-available cycle: 2023-06-07T12:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-07T22:00:00+00:00, GFS analysis=2023-06-07T12:00:00+00:00, analysis lag=10.0h
+   -> analysis used: 2023-06-07T12:00:00+00:00 (lag 10.0h)
+   -> +2h valid 2023-06-08T00:00:00+00:00  truth rate=0.0582  mean p=0.0679
+   -> +3h valid 2023-06-08T01:00:00+00:00  truth rate=0.0715  mean p=0.0566
+   -> +4h valid 2023-06-08T02:00:00+00:00  truth rate=0.0667  mean p=0.0533
+   -> +5h valid 2023-06-08T03:00:00+00:00  truth rate=0.0400  mean p=0.0543
+   -> +6h valid 2023-06-08T04:00:00+00:00  truth rate=0.0448  mean p=0.0561
+
+[case] simulated NOW = 2023-06-11T17:00:00+00:00  (newest genuinely-available cycle: 2023-06-11T12:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-11T17:00:00+00:00, GFS analysis=2023-06-11T12:00:00+00:00, analysis lag=5.0h
+   -> analysis used: 2023-06-11T12:00:00+00:00 (lag 5.0h)
+   -> +2h valid 2023-06-11T19:00:00+00:00  truth rate=0.0800  mean p=0.0929
+   -> +3h valid 2023-06-11T20:00:00+00:00  truth rate=0.0945  mean p=0.0763
+   -> +4h valid 2023-06-11T21:00:00+00:00  truth rate=0.0921  mean p=0.0689
+   -> +5h valid 2023-06-11T22:00:00+00:00  truth rate=0.1006  mean p=0.0685
+   -> +6h valid 2023-06-11T23:00:00+00:00  truth rate=0.1042  mean p=0.0710
+
+[case] simulated NOW = 2023-06-15T12:00:00+00:00  (newest genuinely-available cycle: 2023-06-15T06:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-15T12:00:00+00:00, GFS analysis=2023-06-15T06:00:00+00:00, analysis lag=6.0h
+   -> analysis used: 2023-06-15T06:00:00+00:00 (lag 6.0h)
+   -> +2h valid 2023-06-15T14:00:00+00:00  truth rate=0.0752  mean p=0.1134
+   -> +3h valid 2023-06-15T15:00:00+00:00  truth rate=0.0885  mean p=0.0879
+   -> +4h valid 2023-06-15T16:00:00+00:00  truth rate=0.1103  mean p=0.0745
+   -> +5h valid 2023-06-15T17:00:00+00:00  truth rate=0.1188  mean p=0.0686
+   -> +6h valid 2023-06-15T18:00:00+00:00  truth rate=0.1345  mean p=0.0669
+
+[case] simulated NOW = 2023-06-19T07:00:00+00:00  (newest genuinely-available cycle: 2023-06-19T00:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-19T07:00:00+00:00, GFS analysis=2023-06-19T00:00:00+00:00, analysis lag=7.0h
+   -> analysis used: 2023-06-19T00:00:00+00:00 (lag 7.0h)
+   -> +2h valid 2023-06-19T09:00:00+00:00  truth rate=0.0061  mean p=0.2679
+   -> +3h valid 2023-06-19T10:00:00+00:00  truth rate=0.0073  mean p=0.2601
+   -> +4h valid 2023-06-19T11:00:00+00:00  truth rate=0.0255  mean p=0.2424
+   -> +5h valid 2023-06-19T12:00:00+00:00  truth rate=0.0461  mean p=0.2227
+   -> +6h valid 2023-06-19T13:00:00+00:00  truth rate=0.0448  mean p=0.2014
+
+[case] simulated NOW = 2023-06-23T02:00:00+00:00  (newest genuinely-available cycle: 2023-06-22T18:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-23T02:00:00+00:00, GFS analysis=2023-06-22T18:00:00+00:00, analysis lag=8.0h
+   -> analysis used: 2023-06-22T18:00:00+00:00 (lag 8.0h)
+   -> +2h valid 2023-06-23T04:00:00+00:00  truth rate=0.0873  mean p=0.0046
+   -> +3h valid 2023-06-23T05:00:00+00:00  truth rate=0.0970  mean p=0.0050
+   -> +4h valid 2023-06-23T06:00:00+00:00  truth rate=0.0958  mean p=0.0062
+   -> +5h valid 2023-06-23T07:00:00+00:00  truth rate=0.0545  mean p=0.0082
+   -> +6h valid 2023-06-23T08:00:00+00:00  truth rate=0.0388  mean p=0.0103
+
+[case] simulated NOW = 2023-06-26T21:00:00+00:00  (newest genuinely-available cycle: 2023-06-26T12:00:00+00:00)
+[NowcastService] Live state refreshed. Reference (wall-clock) t0=2023-06-26T21:00:00+00:00, GFS analysis=2023-06-26T12:00:00+00:00, analysis lag=9.0h
+   -> analysis used: 2023-06-26T12:00:00+00:00 (lag 9.0h)
+   -> +2h valid 2023-06-26T23:00:00+00:00  truth rate=0.0242  mean p=0.0426
+   -> +3h valid 2023-06-27T00:00:00+00:00  truth rate=0.0230  mean p=0.0385
+   -> +4h valid 2023-06-27T01:00:00+00:00  truth rate=0.0242  mean p=0.0340
+   -> +5h valid 2023-06-27T02:00:00+00:00  truth rate=0.0182  mean p=0.0341
+   -> +6h valid 2023-06-27T03:00:00+00:00  truth rate=0.0097  mean p=0.0331
+
+================================================================
+HISTORICAL GFS PRODUCTION BACKTEST RESULTS
+================================================================
+
+Simulated NOW instants attempted : 16
+Completed through production path: 16
+
+--- HORIZON +2h ---
+  Simulated cases    : 16
+  Samples (cells)    : 13200
+  Event prevalence   : 0.0364
+  Threshold (calib.) : 0.7270
+  CSI                : 0.0459
+  POD                : 0.0958
+  FAR                : 0.9190
+  PR-AUC             : 0.0530
+    (no-skill baseline: 0.0364)
+  Brier score        : 0.0799
+  ECE (calibration)  : 0.0996
+
+--- HORIZON +3h ---
+  Simulated cases    : 16
+  Samples (cells)    : 13200
+  Event prevalence   : 0.0368
+  Threshold (calib.) : 0.6790
+  CSI                : 0.0175
+  POD                : 0.0350
+  FAR                : 0.9663
+  PR-AUC             : 0.0464
+    (no-skill baseline: 0.0368)
+  Brier score        : 0.0725
+  ECE (calibration)  : 0.0894
+
+--- HORIZON +4h ---
+  Simulated cases    : 16
+  Samples (cells)    : 13200
+  Event prevalence   : 0.0368
+  Threshold (calib.) : 0.6730
+  CSI                : 0.0235
+  POD                : 0.0432
+  FAR                : 0.9510
+  PR-AUC             : 0.0536
+    (no-skill baseline: 0.0368)
+  Brier score        : 0.0653
+  ECE (calibration)  : 0.0784
+
+--- HORIZON +5h ---
+  Simulated cases    : 16
+  Samples (cells)    : 13200
+  Event prevalence   : 0.0426
+  Threshold (calib.) : 0.6370
+  CSI                : 0.0405
+  POD                : 0.0694
+  FAR                : 0.9114
+  PR-AUC             : 0.0756
+    (no-skill baseline: 0.0426)
+  Brier score        : 0.0655
+  ECE (calibration)  : 0.0754
+
+--- HORIZON +6h ---
+  Simulated cases    : 16
+  Samples (cells)    : 13200
+  Event prevalence   : 0.0415
+  Threshold (calib.) : 0.6250
+  CSI                : 0.0609
+  POD                : 0.1022
+  FAR                : 0.8689
+  PR-AUC             : 0.0995
+    (no-skill baseline: 0.0415)
+  Brier score        : 0.0599
+  ECE (calibration)  : 0.0666
+
+Wrote reports/gfs_backtest_v2_VAL2023.json
+Wrote raw arrays -> reports/raw/v2_val2023.npz (5 horizons)

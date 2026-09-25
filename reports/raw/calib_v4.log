@@ -1,0 +1,28 @@
+D:\Weather-Hackathon\venv\Lib\site-packages\torch\utils\data\dataloader.py:759: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+  super().__init__(loader)
+[calib] Data/outputs/checkpoints_v4/v2_best_epoch9_snapshot.pt  epoch=8  leads=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+[calib] existing temperature_per_lead=None
+[calib] fitting on val: 4302 samples, 135 batches
+    ...40/135
+    ...80/135
+    ...120/135
+[calib] logits (4302, 13, 33, 25)
+[calib] fitted temperature_per_lead = [0.3141, 0.3178, 0.3177, 0.322, 0.318, 0.3255, 0.3231, 0.3137, 0.3175, 0.3112, 0.2929, 0.2838, 0.279]
+
+  lead        T  ECE before  ECE after  Brier before  Brier after
+   +4h   0.3141      0.1966     0.0897       0.08417      0.05948
+   +5h   0.3178      0.1968     0.0887       0.08448      0.05996
+   +6h   0.3177      0.1993     0.0885       0.08561      0.06055
+   +7h   0.3220      0.2020     0.0897       0.08689      0.06162
+   +8h   0.3180      0.2032     0.0860       0.08698      0.06045
+   +9h   0.3255      0.2048     0.0877       0.08775      0.06163
+  +10h   0.3231      0.2094     0.0904       0.08994      0.06324
+  +11h   0.3137      0.2149     0.0913       0.09231      0.06398
+  +12h   0.3175      0.2205     0.0978       0.09529      0.06714
+  +13h   0.3112      0.2223     0.0959       0.09592      0.06639
+  +14h   0.2929      0.2260     0.0914       0.09716      0.06441
+  +15h   0.2838      0.2303     0.0921       0.09929      0.06488
+  +16h   0.2790      0.2347     0.0943       0.10150      0.06617
+
+[calib] wrote temperature_per_lead into Data/outputs/checkpoints_v4/v2_best_epoch9_snapshot.pt
+[calib] wrote reports/v4_calibration.json

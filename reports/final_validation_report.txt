@@ -1,0 +1,50 @@
+FINAL COMPARISON REPORT
+======================================================================
+Component                                           | Before     | After      | Classification                
+-------------------------------------------------------------------------------------------------------------
+/api/health                                         | Baseline   | Baseline   | MATCH                         
+/api/system/info                                    | Baseline   | Baseline   | MATCH                         
+/api/model-info                                     | error      | HTTP 500   | PRE-EXISTING ISSUE            
+/api/time/reference?mode=live                       | Baseline   | Baseline   | MATCH                         
+/api/time/reference?mode=historical                 | Baseline   | Baseline   | MATCH                         
+/api/mode/status                                    | Baseline   | Baseline   | MATCH                         
+/api/benchmark/models                               | Baseline   | Baseline   | MATCH                         
+/api/boundaries/state                               | Baseline   | Baseline   | MATCH                         
+/api/boundaries/west-bengal                         | Baseline   | Baseline   | MATCH                         
+/api/data-health                                    | Baseline   | Baseline   | MATCH                         
+/api/satellite/info                                 | Baseline   | Baseline   | MATCH                         
+/api/geo/areas                                      | Baseline   | Baseline   | MATCH                         
+/api/nowcast/summary?lead=2&mode=live               | Baseline   | Baseline   | MATCH                         
+/api/nowcast/summary?lead=4&mode=live               | Baseline   | Baseline   | MATCH                         
+/api/nowcast/summary?lead=6&mode=live               | Baseline   | Baseline   | MATCH                         
+/api/nowcast/districts?lead=2&mode=live             | Baseline   | Baseline   | MATCH                         
+/api/nowcast/high-risk-cells?lead=2&mode=live       | Baseline   | Baseline   | MATCH                         
+/api/nowcast/thermodynamics?mode=live               | Baseline   | Baseline   | MATCH                         
+/api/nowcast/xai?mode=live                          | Baseline   | Baseline   | MATCH                         
+/api/nowcast/point?lat=22.5&lon=88.3&lead=2...      | Baseline   | Baseline   | MATCH                         
+/api/nowcast/point?lat=22.5&lon=88.3&lead=4...      | Baseline   | Baseline   | MATCH                         
+/api/nowcast/point?lat=22.5&lon=88.3&lead=6...      | Baseline   | Baseline   | MATCH                         
+/api/nowcast/summary?lead=2&mode=historical         | Baseline   | Baseline   | MATCH                         
+/api/nowcast/summary?lead=4&mode=historical         | Baseline   | Baseline   | MATCH                         
+/api/nowcast/summary?lead=6&mode=historical         | Baseline   | Baseline   | MATCH                         
+/api/nowcast/districts?lead=2&mode=historical       | Baseline   | Baseline   | MATCH                         
+/api/nowcast/high-risk-cells?lead=2&mode=historical | Baseline   | Baseline   | MATCH                         
+/api/nowcast/thermodynamics?mode=historical         | Baseline   | Baseline   | MATCH                         
+/api/nowcast/xai?mode=historical                    | Baseline   | Baseline   | MATCH                         
+/api/nowcast/point?lat=22.5&lon=88.3&lead=2...      | Baseline   | Baseline   | MATCH                         
+/api/nowcast/point?lat=22.5&lon=88.3&lead=4...      | Baseline   | Baseline   | MATCH                         
+/api/nowcast/point?lat=22.5&lon=88.3&lead=6...      | Baseline   | Baseline   | MATCH                         
+/api/historical/case-study                          | Baseline   | Baseline   | MATCH                         
+/api/historical/analysis-state                      | Baseline   | Baseline   | MATCH                         
+
+Pytest E2E Suite:
+- test_unforecast_fields_are_not_carried_into_forecast_horizons | FAILED | PRE-EXISTING ISSUE (Out of sync hardcoded string assertions)
+- test_historical_radar_panel_does_not_claim_a_radar_product | FAILED | PRE-EXISTING ISSUE (Out of sync hardcoded string assertions)
+- test_public_ui_does_not_expose_threshold_numbers | FAILED | PRE-EXISTING ISSUE (Out of sync hardcoded string assertions)
+- test_now_shows_observations_not_a_forecast_field | FAILED | PRE-EXISTING ISSUE (Out of sync hardcoded string assertions)
+- All structural browser/app loading E2E tests | PASSED | MATCH (Playwright successfully loads and parses frontend)
+
+Asset Validation:
+- CSS Loads | MATCH
+- JS Loads | MATCH
+- Static Maps/Images Load | MATCH
