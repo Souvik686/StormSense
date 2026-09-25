@@ -43,32 +43,57 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 - **Outputs:** Severe-weather probability, 3-hour rainfall (mm), and a derived flash-flood risk proxy.
 - **Lead Times:** +2h, +3h, +4h, +5h, +6h native model leads.
 - **Live inference:** Fetches the newest available NOAA GFS analysis, harmonizes it onto the model's grid, and runs real inference — this is the primary mode the dashboard runs in.
+- **Calibration:** Per-lead Platt temperature scaling and optimal classification thresholds (τ), fit on a held-out 2023 validation set.
 
-## 📊 Interactive Dashboard
-- **Wall-clock horizons:** NOW, +2h, +4h, +6h dynamic UI buttons.
-- **XAI (Explainable AI):** Rule-based factor attribution describing which atmospheric factors drove a given forecast.
-- **Live Observations:** Real-time OpenWeatherMap surface station data integration.
+## 📊 Dashboard Views
+
+The dashboard is organized into 8 views, grouped as **Command Center** (the operational picture) and **System & Verification** (the pipeline and model evidence behind it):
+
+| View | What it shows |
+|---|---|
+| **Dashboard** | The main operational picture: 4 hazard KPI cards (thunderstorm, heavy rainfall, flash-flood proxy, combined index), the interactive risk map with NOW/+2h/+4h/+6h horizons, current observed conditions, and the current-location panel bound to the viewer's own coordinates. |
+| **Radar & Satellite Feeds** | Live RainViewer radar mosaic over West Bengal + neighbouring states, alongside the INSAT-3DR geostationary satellite data channel (thermal IR, water vapor, precipitation QPE, cloud-top pressure). |
+| **District Advisories** | Per-district civil-defence cards (all 12 monitored districts) with thunderstorm/rainfall/flash-flood percentages, peak risk, and the operator's "Dispatch District Evacuation Siren" action. |
+| **AI Nowcast & Benchmark** | Rigorous model comparison on the held-out 2024 test set: the production model vs. an earlier baseline vs. a persistence heuristic, across CSI, PR-AUC, POD, FAR, Brier score, and rainfall MAE. |
+| **XAI Feature Attribution** | Rule-based (physics-inspired, not gradient-based) attribution ranking which atmospheric factors — CAPE/CIN, wind shear, moisture convergence, mid-tropospheric humidity, orographic lift — drove the current forecast. |
+| **GIS Spatial Layers** | The forecast's geospatial domain manager: West Bengal district boundaries (GeoJSON), the 0.25° / 825-cell prediction grid, the SRTM 30m elevation input, and live surface station coordinates. |
+| **Calibrated Thresholds** | The per-lead calibration math itself: τ and temperature-scaling factor T at each horizon, and the IMD-aligned Normal/Watch/Alert/Warning severity bands they define. |
+| **Data Ingestion Streams** | Live pipeline health for every input feed (surface observations, gridded atmospheric analysis, SRTM DEM, model engine, GIS boundaries) with online/offline status and poll intervals. |
 
 <br>
 
 <table>
 <tr>
-<td width="33%"><img src="frontend/static/screenshots/risk-map-overview.png" alt="Spatial risk map over West Bengal districts"></td>
-<td width="33%"><img src="frontend/static/screenshots/district-advisories.png" alt="District-level advisories and civil defence protocols"></td>
-<td width="33%"><img src="frontend/static/screenshots/xai-attribution.png" alt="Explainable AI atmospheric attribution panel"></td>
+<td width="50%"><img src="frontend/static/screenshots/interactive-map-location.png" alt="Interactive nowcasting map with current-location risk panel"></td>
+<td width="50%"><img src="frontend/static/screenshots/bulletins-xai.png" alt="Meteorological bulletins and XAI factor attribution"></td>
 </tr>
 <tr>
-<td align="center"><sub>Spatial risk map, live mode</sub></td>
+<td align="center"><sub>Interactive map + current-location AI forecast risk</sub></td>
+<td align="center"><sub>Active bulletins & XAI factor attribution</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="frontend/static/screenshots/district-advisories.png" alt="District-level advisories and civil defence protocols"></td>
+<td width="50%"><img src="frontend/static/screenshots/model-benchmark.png" alt="AI Nowcast and model benchmark comparison"></td>
+</tr>
+<tr>
 <td align="center"><sub>District advisories & civil defence protocols</sub></td>
-<td align="center"><sub>XAI atmospheric attribution</sub></td>
+<td align="center"><sub>Model benchmark: AI forecast vs. earlier baseline vs. persistence</sub></td>
 </tr>
 <tr>
-<td width="33%"><img src="frontend/static/screenshots/radar-satellite-live.png" alt="Radar and INSAT-3DR satellite data desk"></td>
-<td width="33%" colspan="2"><img src="frontend/static/screenshots/model-benchmark.png" alt="AI Nowcast and model benchmark comparison"></td>
+<td width="50%"><img src="frontend/static/screenshots/radar-satellite-live.png" alt="Radar and INSAT-3DR satellite data desk"></td>
+<td width="50%"><img src="frontend/static/screenshots/calibrated-thresholds.png" alt="Calibrated alert thresholds and temperature scaling"></td>
 </tr>
 <tr>
 <td align="center"><sub>Radar & INSAT-3DR satellite data desk</sub></td>
-<td align="center" colspan="2"><sub>Model benchmark: AI forecast vs. earlier baseline vs. persistence</sub></td>
+<td align="center"><sub>Calibrated alert thresholds & temperature scaling</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="frontend/static/screenshots/gis-spatial-layers.png" alt="GIS spatial layers and domain manager"></td>
+<td width="50%"><img src="frontend/static/screenshots/data-ingestion-streams.png" alt="Data ingestion pipeline health streams"></td>
+</tr>
+<tr>
+<td align="center"><sub>GIS spatial layers & domain manager</sub></td>
+<td align="center"><sub>Data ingestion pipeline health</sub></td>
 </tr>
 </table>
 
