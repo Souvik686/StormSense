@@ -343,13 +343,18 @@ window.STORMSENSE_MAPS_KEYS = (typeof GOOGLE_MAPS_API_KEYS_JSON_PLACEHOLDER !== 
 <div class="bg-slate-800 px-4 py-2 flex items-center justify-between text-white text-xs font-mono font-bold tracking-wide" id="landing-hero-ribbon">
 <div class="flex items-center gap-2">
 <span class="w-2.5 h-2.5 rounded-full bg-white animate-pulse"></span>
-<span id="landing-hero-ribbon-text">LOADING LIVE MODEL STATE</span>
+<span id="landing-hero-ribbon-text">LOADING CASE STUDY</span>
 </div>
 <span class="bg-black/30 px-2 py-0.5 rounded text-[11px]" id="landing-hero-ribbon-badge">&hellip;</span>
 </div>
-<!-- Live Risk Surface: fetched directly from the model's own API -->
+<!-- Historical demo case (Cyclone Remal, 26 May 2024): shown here instead
+     of the LIVE risk field precisely because live conditions are often calm,
+     which made this hero look uneventful. Both the image and the ribbon/HUD
+     text below are pinned to the SAME historical event so they can never
+     disagree with each other -- this is honestly labelled as a case study,
+     never claimed as the current live state. -->
 <div class="relative w-full aspect-[4/3] bg-slate-950 overflow-hidden group">
-<img alt="StormSense risk map screenshot showing colour-banded severe-weather risk bands across West Bengal districts" class="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-700" id="landing-hero-risk-img" src="/static/screenshots/risk-map-overview.png"/>
+<img alt="StormSense risk map screenshot from the Cyclone Remal historical case study, showing colour-banded severe-weather risk bands across West Bengal districts" class="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-700" id="landing-hero-risk-img" src="/static/screenshots/remal-risk-map.png"/>
 <!-- Top Left Telemetry HUD -->
 <div class="absolute top-3 left-3 bg-[#0b101d]/90 backdrop-blur-md px-3 py-2 rounded border border-slate-700/80 text-[11px] font-mono text-slate-200 shadow-lg space-y-0.5">
 <div class="text-sky-400 font-bold flex items-center gap-1.5">
@@ -1384,8 +1389,13 @@ The radar mosaic above is observed precipitation (RainViewer), a different produ
     setInterval(loadXai, 5 * 60 * 1000);
   });
 </script>
-<!-- Live Hero Card: real data from this app's own API, same origin.
-     Re-fetches every 5 minutes for the same reason as the sections above. -->
+<!-- Historical Demo Hero Card: Cyclone Remal case-study data from this app's
+     own API (mode=historical), same origin. NOT live: live conditions are
+     frequently calm, which made this hero look uneventful and, worse, could
+     disagree with the fixed Remal image above if this fetched live data
+     instead. Fixed historical data never changes, so this fetches once
+     (still through the real API rather than hardcoding numbers, so it can
+     never drift from the model's own output) and is never re-polled. -->
 <script>
   document.addEventListener('DOMContentLoaded', function () {
     var ribbonText = document.getElementById('landing-hero-ribbon-text');
@@ -1402,11 +1412,14 @@ The radar mosaic above is observed precipitation (RainViewer), a different produ
     if (!ribbonText) return;
 
     var LEVEL_BG = { red: 'bg-red-800', orange: 'bg-orange-800', yellow: 'bg-amber-800', green: 'bg-emerald-800' };
-    var LEVEL_LABEL = { red: 'SEVERE RISK ACTIVE', orange: 'ELEVATED RISK', yellow: 'WATCH CONDITIONS', green: 'ROUTINE MONITORING' };
+    // Labelled as a CASE STUDY at every level, never as the present-tense
+    // "active"/"conditions" wording the live version used -- this is a
+    // fixed historical event, so the label must never read as current.
+    var LEVEL_LABEL = { red: 'CASE STUDY: SEVERE RISK', orange: 'CASE STUDY: ELEVATED RISK', yellow: 'CASE STUDY: WATCH LEVEL', green: 'CASE STUDY: ROUTINE LEVEL' };
     var LEVEL_BADGE = { red: 'WARNING', orange: 'ALERT', yellow: 'WATCH', green: 'NORMAL' };
 
     function loadHero() {
-    fetch('/api/nowcast/districts?lead=0&mode=live')
+    fetch('/api/nowcast/districts?lead=0&mode=historical')
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -1419,10 +1432,10 @@ The radar mosaic above is observed precipitation (RainViewer), a different produ
 
         var level = top.risk_level || 'green';
         if (ribbon) ribbon.className = ribbon.className.replace(/bg-slate-800\b/, LEVEL_BG[level] || 'bg-slate-800');
-        if (ribbonText) ribbonText.textContent = LEVEL_LABEL[level] || 'ROUTINE MONITORING';
+        if (ribbonText) ribbonText.textContent = LEVEL_LABEL[level] || 'CASE STUDY: ROUTINE LEVEL';
         if (ribbonBadge) ribbonBadge.textContent = (LEVEL_BADGE[level] || 'NORMAL') + ' · ' + top.overall_pct + '%';
         if (hudDistrict) hudDistrict.textContent = 'PEAK: ' + top.district.toUpperCase();
-        if (statusText) statusText.textContent = (LEVEL_BADGE[level] || 'NORMAL') + ' · ' + top.stage;
+        if (statusText) statusText.textContent = 'REMAL · ' + (LEVEL_BADGE[level] || 'NORMAL');
         if (rainValue) rainValue.innerHTML = Number(top.heavy_rainfall_mm_3h).toFixed(1) + ' <span class="text-xs text-slate-300 font-normal">mm</span>';
         if (rainDistrict) rainDistrict.textContent = top.district.toUpperCase() + ' · 3H';
         if (peakPct) peakPct.textContent = top.overall_pct + '% (' + (LEVEL_BADGE[level] || 'NORMAL') + ')';
@@ -1443,8 +1456,8 @@ The radar mosaic above is observed precipitation (RainViewer), a different produ
         }
       })
       .catch(function (err) {
-        console.warn('Landing hero data unavailable', err);
-        if (ribbonText) ribbonText.textContent = 'LIVE DATA UNAVAILABLE';
+        console.warn('Landing hero case-study data unavailable', err);
+        if (ribbonText) ribbonText.textContent = 'CASE STUDY DATA UNAVAILABLE';
         if (ribbonBadge) ribbonBadge.textContent = '—';
         if (hudDistrict) hudDistrict.textContent = 'DATA UNAVAILABLE';
         if (statusText) statusText.textContent = 'UNAVAILABLE';
@@ -1454,7 +1467,6 @@ The radar mosaic above is observed precipitation (RainViewer), a different produ
     }
 
     loadHero();
-    setInterval(loadHero, 5 * 60 * 1000);
   });
 </script>
 </body></html>
