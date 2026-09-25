@@ -98,3 +98,10 @@ reports/
 # --- Orphaned doc: described three .docx files that live under ------
 # docs/manual/, not here; this folder itself never held them.
 DOCUMENTATION/
+
+# --- Superseded README screenshots ---------------------------------
+# No longer referenced by README.md after the gallery was rebuilt to
+# cover all 8 dashboard views; kept on disk only.
+frontend/static/screenshots/radar-historical-remal.png
+frontend/static/screenshots/risk-map-overview.png
+frontend/static/screenshots/xai-attribution.png
