@@ -62,6 +62,14 @@ Short-range, hyper-local severe-weather warning for a monsoon-affected region is
 <td align="center"><sub>District advisories & civil defence protocols</sub></td>
 <td align="center"><sub>XAI atmospheric attribution</sub></td>
 </tr>
+<tr>
+<td width="33%"><img src="frontend/static/screenshots/radar-satellite-live.png" alt="Radar and INSAT-3DR satellite data desk"></td>
+<td width="33%" colspan="2"><img src="frontend/static/screenshots/model-benchmark.png" alt="AI Nowcast and model benchmark comparison"></td>
+</tr>
+<tr>
+<td align="center"><sub>Radar & INSAT-3DR satellite data desk</sub></td>
+<td align="center" colspan="2"><sub>Model benchmark: AI forecast vs. earlier baseline vs. persistence</sub></td>
+</tr>
 </table>
 
 ## 🕰️ Historical Case Study (secondary)
