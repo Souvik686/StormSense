@@ -99,9 +99,11 @@ reports/
 # docs/manual/, not here; this folder itself never held them.
 DOCUMENTATION/
 
-# --- Superseded README screenshots ---------------------------------
+# --- Superseded README screenshot -----------------------------------
 # No longer referenced by README.md after the gallery was rebuilt to
 # cover all 8 dashboard views; kept on disk only.
+# risk-map-overview.png was mistakenly included here too: landing.html's
+# hero image (#landing-hero-risk-img) still references it in production,
+# so untracking it 404'd the live site. It stays tracked.
 frontend/static/screenshots/radar-historical-remal.png
-frontend/static/screenshots/risk-map-overview.png
 frontend/static/screenshots/xai-attribution.png
