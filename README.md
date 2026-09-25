@@ -65,11 +65,11 @@ The dashboard is organized into 8 views, grouped as **Command Center** (the oper
 <table>
 <tr>
 <td width="50%"><img src="frontend/static/screenshots/interactive-map-location.png" alt="Interactive nowcasting map with current-location risk panel"></td>
-<td width="50%"><img src="frontend/static/screenshots/bulletins-xai.png" alt="Meteorological bulletins and XAI factor attribution"></td>
+<td width="50%"><img src="frontend/static/screenshots/xai-attribution-lab.png" alt="Explainable AI atmospheric attribution lab"></td>
 </tr>
 <tr>
 <td align="center"><sub>Interactive map + current-location AI forecast risk</sub></td>
-<td align="center"><sub>Active bulletins & XAI factor attribution</sub></td>
+<td align="center"><sub>XAI atmospheric attribution lab</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="frontend/static/screenshots/district-advisories.png" alt="District-level advisories and civil defence protocols"></td>
