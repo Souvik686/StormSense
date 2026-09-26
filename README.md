@@ -22,9 +22,26 @@ StormSense forecasts severe convective weather (thunderstorms, heavy rainfall, f
 
 <div align="center">
 
-**[Overview](#-overview)** · **[Features](#-features)** · **[Tech Stack](#-tech-stack)** · **[Project Structure](#-project-structure)** · **[Installation](#-installation-guide)** · **[Testing](#-testing)** · **[Model & Evaluation](#-model--evaluation-information)** · **[Limitations](#️-limitations)** · **[Security](#-security-notes)**
+**[Live Demo](#-live-demo)** · **[Overview](#-overview)** · **[Features](#-features)** · **[Tech Stack](#-tech-stack)** · **[Project Structure](#-project-structure)** · **[Installation](#-installation-guide)** · **[Testing](#-testing)** · **[Model & Evaluation](#-model--evaluation-information)** · **[Limitations](#️-limitations)** · **[Security](#-security-notes)**
 
 </div>
+
+---
+
+# 🌐 Live Demo
+
+StormSense is deployed and publicly accessible — no local setup required to explore it:
+
+### 🔗 **[stormsense.duckdns.org](https://stormsense.duckdns.org/)**
+
+| Page | Link |
+|---|---|
+| Landing page | https://stormsense.duckdns.org/ |
+| Dashboard | https://stormsense.duckdns.org/dashboard |
+
+> **Note:** This is a live deployment running real-time inference against current GFS analyses — dashboard values change as new data arrives. For the guaranteed severe-weather scenario (Cyclone Remal), see [Historical Case Study](#️-historical-case-study-secondary) below.
+
+### 🔗 **[github.com/Souvik686/StormSense](https://github.com/Souvik686/StormSense)**
 
 ---
 
@@ -170,7 +187,7 @@ StormSense/
 ## Step 1 : Clone the Repository
 
 ```bash
-git clone https://github.com/TechBots2026/StormSense.git
+git clone https://github.com/Souvik686/StormSense.git
 cd StormSense
 git lfs pull
 ```
@@ -271,7 +288,7 @@ Three distinct evaluation contexts exist in this repository:
 
 ## Souvik Sarkar
 
-GitHub: https://github.com/TechBots2026
+GitHub: https://github.com/Souvik686
 
 ---
 
