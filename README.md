@@ -22,109 +22,12 @@ StormSense forecasts severe convective weather (thunderstorms, heavy rainfall, f
 
 <div align="center">
 
-<<<<<<< HEAD
-**[Overview](#-overview)** · **[Features](#-features)** · **[Tech Stack](#-tech-stack)** · **[Project Structure](#-project-structure)** · **[Installation](#-installation-guide)** · **[Testing](#-testing)** · **[Model & Evaluation](#-model--evaluation-information)** · **[Limitations](#️-limitations)** · **[Security](#-security-notes)**
-=======
 **[Live Demo](#-live-demo)** · **[Overview](#-overview)** · **[Features](#-features)** · **[Tech Stack](#-tech-stack)** · **[Project Structure](#-project-structure)** · **[Installation](#-installation-guide)** · **[Testing](#-testing)** · **[Model & Evaluation](#-model--evaluation-information)** · **[Limitations](#️-limitations)** · **[Security](#-security-notes)**
->>>>>>> 0229cf0f20491f7015156f17a3393d094784d6a1
 
 </div>
 
 ---
 
-<<<<<<< HEAD
-# 📖 Overview
-
-Short-range, hyper-local severe-weather warning for a monsoon-affected region is a genuine forecasting gap between synoptic-scale numerical weather prediction (which updates every 6 hours and is too coarse) and radar-only nowcasting (which has no forward skill beyond about an hour). 
-
-**StormSense** targets the 2–6 hour range in between, using a small, fast ConvGRU-based deep learning model trained on reanalysis data and run against live operational analyses.
-
----
-
-# ✨ Features
-
-## 🧠 Advanced Machine Learning
-- **Model:** SevereWeatherNetV2 — a tri-stream ConvGRU feeding a shared multi-horizon decoder (781,889 parameters).
-- **Outputs:** Severe-weather probability, 3-hour rainfall (mm), and a derived flash-flood risk proxy.
-- **Lead Times:** +2h, +3h, +4h, +5h, +6h native model leads.
-- **Live inference:** Fetches the newest available NOAA GFS analysis, harmonizes it onto the model's grid, and runs real inference — this is the primary mode the dashboard runs in.
-- **Calibration:** Per-lead Platt temperature scaling and optimal classification thresholds (τ), fit on a held-out 2023 validation set.
-
-## 📊 Dashboard Views
-
-The dashboard is organized into 8 views, grouped as **Command Center** (the operational picture) and **System & Verification** (the pipeline and model evidence behind it):
-
-| View | What it shows |
-|---|---|
-| **Dashboard** | The main operational picture: 4 hazard KPI cards (thunderstorm, heavy rainfall, flash-flood proxy, combined index), the interactive risk map with NOW/+2h/+4h/+6h horizons, current observed conditions, and the current-location panel bound to the viewer's own coordinates. |
-| **Radar & Satellite Feeds** | Live RainViewer radar mosaic over West Bengal + neighbouring states, alongside the INSAT-3DR geostationary satellite data channel (thermal IR, water vapor, precipitation QPE, cloud-top pressure). |
-| **District Advisories** | Per-district civil-defence cards (all 12 monitored districts) with thunderstorm/rainfall/flash-flood percentages, peak risk, and the operator's "Dispatch District Evacuation Siren" action. |
-| **AI Nowcast & Benchmark** | Rigorous model comparison on the held-out 2024 test set: the production model vs. an earlier baseline vs. a persistence heuristic, across CSI, PR-AUC, POD, FAR, Brier score, and rainfall MAE. |
-| **XAI Feature Attribution** | Rule-based (physics-inspired, not gradient-based) attribution ranking which atmospheric factors — CAPE/CIN, wind shear, moisture convergence, mid-tropospheric humidity, orographic lift — drove the current forecast. |
-| **GIS Spatial Layers** | The forecast's geospatial domain manager: West Bengal district boundaries (GeoJSON), the 0.25° / 825-cell prediction grid, the SRTM 30m elevation input, and live surface station coordinates. |
-| **Calibrated Thresholds** | The per-lead calibration math itself: τ and temperature-scaling factor T at each horizon, and the IMD-aligned Normal/Watch/Alert/Warning severity bands they define. |
-| **Data Ingestion Streams** | Live pipeline health for every input feed (surface observations, gridded atmospheric analysis, SRTM DEM, model engine, GIS boundaries) with online/offline status and poll intervals. |
-
-<br>
-
-<table>
-<tr>
-<td width="50%"><img src="frontend/static/screenshots/interactive-map-location.png" alt="Interactive nowcasting map with current-location risk panel"></td>
-<td width="50%"><img src="frontend/static/screenshots/xai-attribution-lab.png" alt="Explainable AI atmospheric attribution lab"></td>
-</tr>
-<tr>
-<td align="center"><sub>Interactive map + current-location AI forecast risk</sub></td>
-<td align="center"><sub>XAI atmospheric attribution lab</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="frontend/static/screenshots/district-advisories.png" alt="District-level advisories and civil defence protocols"></td>
-<td width="50%"><img src="frontend/static/screenshots/model-benchmark.png" alt="AI Nowcast and model benchmark comparison"></td>
-</tr>
-<tr>
-<td align="center"><sub>District advisories & civil defence protocols</sub></td>
-<td align="center"><sub>Model benchmark: AI forecast vs. earlier baseline vs. persistence</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="frontend/static/screenshots/radar-satellite-live.png" alt="Radar and INSAT-3DR satellite data desk"></td>
-<td width="50%"><img src="frontend/static/screenshots/calibrated-thresholds.png" alt="Calibrated alert thresholds and temperature scaling"></td>
-</tr>
-<tr>
-<td align="center"><sub>Radar & INSAT-3DR satellite data desk</sub></td>
-<td align="center"><sub>Calibrated alert thresholds & temperature scaling</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="frontend/static/screenshots/gis-spatial-layers.png" alt="GIS spatial layers and domain manager"></td>
-<td width="50%"><img src="frontend/static/screenshots/data-ingestion-streams.png" alt="Data ingestion pipeline health streams"></td>
-</tr>
-<tr>
-<td align="center"><sub>GIS spatial layers & domain manager</sub></td>
-<td align="center"><sub>Data ingestion pipeline health</sub></td>
-</tr>
-</table>
-
-## 🕰️ Historical Case Study (secondary)
-A frozen replay of Cyclone Remal (26 May 2024), using the model's real ERA5-input test-time forecast for that event. Its purpose: when live weather over West Bengal happens to be calm at demo time, this lets you show the model actually detecting a genuine severe-weather event from past data, rather than only an uneventful live feed.
-
-<p align="center"><img src="frontend/static/screenshots/dashboard-historical-remal.png" alt="Historical case study: Cyclone Remal replay" width="85%"></p>
-
----
-
-# 🛠 Tech Stack
-
-| Category | Technology |
-|----------|------------|
-| Language | Python 3.11+, JavaScript |
-| Frontend | Vanilla JS, Tailwind CSS, Google Maps API, Leaflet |
-| Backend | FastAPI, Uvicorn |
-| Machine Learning | PyTorch |
-| Geospatial & Data | xarray, cfgrib, h5py, Shapely, GeoPandas |
-| Architecture | Split or Merged-mode client/server |
-
----
-
-# 📂 Project Structure
-
-=======
 # 🌐 Live Demo
 
 StormSense is deployed and publicly accessible — no local setup required to explore it:
@@ -231,7 +134,6 @@ A frozen replay of Cyclone Remal (26 May 2024), using the model's real ERA5-inpu
 
 # 📂 Project Structure
 
->>>>>>> 0229cf0f20491f7015156f17a3393d094784d6a1
 ```text
 StormSense/
 ├── backend/                 # FastAPI app: routes, OpenWeather client, config
@@ -283,11 +185,7 @@ StormSense/
 ## Step 1 : Clone the Repository
 
 ```bash
-<<<<<<< HEAD
-git clone https://github.com/TechBots2026/StormSense.git
-=======
 git clone https://github.com/Souvik686/StormSense.git
->>>>>>> 0229cf0f20491f7015156f17a3393d094784d6a1
 cd StormSense
 git lfs pull
 ```
@@ -388,11 +286,7 @@ Three distinct evaluation contexts exist in this repository:
 
 ## Souvik Sarkar
 
-<<<<<<< HEAD
-GitHub: https://github.com/TechBots2026
-=======
 GitHub: https://github.com/Souvik686
->>>>>>> 0229cf0f20491f7015156f17a3393d094784d6a1
 
 ---
 
